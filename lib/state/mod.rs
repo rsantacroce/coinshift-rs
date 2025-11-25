@@ -19,7 +19,7 @@ use crate::{
         Authorized, AuthorizedTransaction, BlockHash, Body, FilledTransaction,
         GetAddress, GetValue, Header, InPoint, M6id, MerkleRoot, OutPoint,
         OutPointKey, Output, ParentChainType, PointedOutput, SpentOutput,
-        Swap, SwapId, SwapTxId, Transaction, Txid, VERSION, Verify, Version,
+        Swap, SwapId, SwapState, SwapTxId, Transaction, TxData, VERSION, Verify, Version,
         WithdrawalBundle, WithdrawalBundleStatus,
         proto::mainchain::TwoWayPegData,
     },
@@ -119,7 +119,7 @@ pub struct State {
     >,
     /// Tracks which outputs are locked to which swap
     pub locked_swap_outputs: DatabaseUnique<
-        SerdeBincode<OutPointKey>,
+        OutPointKey,
         SerdeBincode<SwapId>,
     >,
     _version: DatabaseUnique<UnitKey, SerdeBincode<Version>>,

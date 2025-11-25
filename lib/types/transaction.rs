@@ -10,7 +10,7 @@ use utoipa::ToSchema;
 
 use super::{
     Address, AmountOverflowError, Hash, M6id, MerkleRoot, ParentChainType,
-    SwapId, Txid, hash, hash_with_scratch_buffer,
+    Txid, hash, hash_with_scratch_buffer,
 };
 use crate::authorization::Authorization;
 
@@ -537,6 +537,21 @@ pub enum TxData {
     },
 }
 
+// Manual ToSchema implementation for TxData
+impl utoipa::ToSchema for TxData {
+    fn name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("TxData")
+    }
+}
+
+impl utoipa::PartialSchema for TxData {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::Schema> {
+        utoipa::openapi::RefOr::T(utoipa::openapi::Schema::Object(
+            utoipa::openapi::Object::with_type(utoipa::openapi::Type::String),
+        ))
+    }
+}
+
 impl Default for TxData {
     fn default() -> Self {
         Self::Regular
@@ -613,7 +628,6 @@ pub struct Transaction {
     pub proof: Proof,
     pub outputs: Vec<Output>,
     /// Transaction data (swap operations, etc.)
-    #[borsh(default)]
     pub data: TxData,
 }
 

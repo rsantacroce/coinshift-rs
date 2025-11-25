@@ -830,11 +830,12 @@ pub mod mainchain {
         fn try_from(
             header_info: &generated::BlockHeaderInfo,
         ) -> Result<Self, Self::Error> {
-            let generated::BlockHeaderInfo {
+              let generated::BlockHeaderInfo {
                 block_hash,
                 prev_block_hash,
                 height,
                 work,
+                timestamp: _,
             } = header_info;
             let block_hash = block_hash
                 .as_ref()

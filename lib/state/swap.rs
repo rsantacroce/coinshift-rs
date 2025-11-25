@@ -1,6 +1,6 @@
 //! Swap validation and processing
 
-use sneed::{RoTxn, RwTxn, db::error::Error as DbError};
+use sneed::RoTxn;
 
 use crate::{
     state::{Error, State},
@@ -19,9 +19,9 @@ pub fn validate_swap_create(
 ) -> Result<(), Error> {
     let TxData::SwapCreate {
         swap_id,
-        parent_chain,
-        l1_txid_bytes,
-        required_confirmations,
+        parent_chain: _,
+        l1_txid_bytes: _,
+        required_confirmations: _,
         l2_recipient,
         l2_amount,
         l1_recipient_address,
@@ -105,11 +105,13 @@ pub fn validate_swap_create(
         }
 
         // Verify transaction spends at least l2_amount
-        let total_input_value: bitcoin::Amount = filled_transaction
+        let total_input_value = filled_transaction
             .spent_utxos
             .iter()
-            .map(|utxo| utxo.get_value())
-            .sum::<Result<_, _>>()
+            .map(|utxo| crate::types::GetValue::get_value(utxo))
+            .try_fold(bitcoin::Amount::ZERO, |acc, val| {
+                acc.checked_add(val).ok_or(())
+            })
             .map_err(|_| {
                 Error::InvalidTransaction("Input value overflow".to_string())
             })?;
@@ -131,7 +133,7 @@ pub fn validate_swap_claim(
     state: &State,
     rotxn: &RoTxn,
     transaction: &Transaction,
-    filled_transaction: &FilledTransaction,
+    _filled_transaction: &FilledTransaction,
 ) -> Result<(), Error> {
     let TxData::SwapClaim { swap_id, .. } = &transaction.data else {
         return Err(Error::InvalidTransaction(

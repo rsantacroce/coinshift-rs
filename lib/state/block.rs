@@ -5,7 +5,7 @@ use sneed::{RoTxn, RwTxn, db::error::Error as DbError};
 
 use crate::{
     authorization::Authorization,
-    state::{Error, PrevalidatedBlock, State, error, swap},
+    state::{Error, PrevalidatedBlock, State, error},
     types::{
         AccumulatorDiff, AmountOverflowError, Body, FilledTransaction,
         GetAddress as _, GetValue as _, Header, InPoint, MerkleRoot, OutPoint,
@@ -284,7 +284,7 @@ pub fn connect_prevalidated(
                 );
 
                 // Verify swap ID matches
-                if swap.id.0 != *swap_id {
+                if swap.id.0 != swap_id.0 {
                     return Err(Error::InvalidTransaction(format!(
                         "Swap ID mismatch in SwapCreate"
                     )));
@@ -299,7 +299,7 @@ pub fn connect_prevalidated(
                         };
                         state
                             .lock_output_to_swap(rwtxn, &outpoint, &swap_id)
-                            .map_err(DbError::from)?;
+                            .map_err(Error::from)?;
                     }
                 }
 

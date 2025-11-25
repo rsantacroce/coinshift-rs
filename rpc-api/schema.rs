@@ -48,3 +48,35 @@ where
             .into()
     }
 }
+
+/// Tuple of two types `(T, U)`
+pub struct Tuple<T, U>(PhantomData<(T, U)>);
+
+impl<T, U> PartialSchema for Tuple<T, U>
+where
+    T: PartialSchema,
+    U: PartialSchema,
+{
+    fn schema() -> openapi::RefOr<openapi::schema::Schema> {
+        openapi::schema::Object::builder()
+            .property(
+                "0",
+                T::schema(),
+            )
+            .property(
+                "1",
+                U::schema(),
+            )
+            .into()
+    }
+}
+
+impl<T, U> ToSchema for Tuple<T, U>
+where
+    T: ToSchema,
+    U: ToSchema,
+{
+    fn name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Owned(format!("Tuple<{}, {}>", T::name(), U::name()))
+    }
+}

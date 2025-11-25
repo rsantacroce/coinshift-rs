@@ -197,7 +197,7 @@ pub trait Rpc {
 
     /// Create a swap (L2 → L1)
     /// If l2_recipient is None, creates an open swap (anyone can fill it)
-    #[open_api_method(output_schema(ToSchema))]
+    #[open_api_method(output_schema(PartialSchema = "schema::Tuple<SwapId, Txid>"))]
     #[method(name = "create_swap")]
     async fn create_swap(
         &self,

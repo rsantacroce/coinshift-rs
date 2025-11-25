@@ -28,7 +28,7 @@ pub use crate::{
 use crate::{
     types::{
         Accumulator, AmountOverflowError, AmountUnderflowError, PointedOutput,
-        SwapDirection, UtreexoError, VERSION, Version, hash,
+        UtreexoError, VERSION, Version, hash,
     },
     util::Watchable,
 };
@@ -415,11 +415,13 @@ impl Wallet {
         let proof = accumulator.prove(&input_utxo_hashes)?;
 
         // 2. Calculate total value from locked outputs
-        let total_value: bitcoin::Amount = locked_outputs
-            .iter()
-            .map(|(_, output)| output.get_value())
-            .sum::<Result<_, _>>()
-            .map_err(|_| AmountOverflowError)?;
+        use crate::types::GetValue;
+        let mut total_value = bitcoin::Amount::ZERO;
+        for (_, output) in &locked_outputs {
+            total_value = total_value
+                .checked_add(output.get_value())
+                .ok_or(AmountOverflowError)?;
+        }
 
         // 3. Create output to swap recipient
         let outputs = vec![Output {
