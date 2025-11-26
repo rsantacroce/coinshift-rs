@@ -110,6 +110,7 @@ pub struct Node<MainchainTransport = Channel> {
     net: Net,
     net_task: NetTaskHandle,
     state: State,
+    wallet: Option<Arc<crate::wallet::Wallet>>,
 }
 
 impl<MainchainTransport> Node<MainchainTransport>
@@ -125,6 +126,7 @@ where
         >,
         network: Network,
         runtime: &tokio::runtime::Runtime,
+        wallet: Option<Arc<crate::wallet::Wallet>>,
     ) -> Result<Self, Error>
     where
         mainchain::ValidatorClient<MainchainTransport>: Clone,
@@ -184,6 +186,7 @@ where
         let (net, peer_info_rx) =
             Net::new(&env, archive.clone(), network, state.clone(), bind_addr)?;
 
+        let wallet_clone = wallet.clone();
         let net_task = NetTaskHandle::new(
             runtime,
             env.clone(),
@@ -194,6 +197,7 @@ where
             net.clone(),
             peer_info_rx,
             state.clone(),
+            wallet_clone,
         );
         let cusf_mainchain_wallet =
             cusf_mainchain_wallet.map(|wallet| Arc::new(Mutex::new(wallet)));
@@ -207,6 +211,7 @@ where
             net,
             net_task,
             state,
+            wallet,
         })
     }
 

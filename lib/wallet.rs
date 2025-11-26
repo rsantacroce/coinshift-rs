@@ -632,6 +632,17 @@ impl Wallet {
         Ok(addresses)
     }
 
+    /// Check if an address belongs to this wallet
+    pub fn has_address(&self, address: &Address) -> Result<bool, Error> {
+        let rotxn = self.env.read_txn().map_err(EnvError::from)?;
+        let exists = self
+            .address_to_index
+            .try_get(&rotxn, address)
+            .map_err(DbError::from)?
+            .is_some();
+        Ok(exists)
+    }
+
     pub fn authorize(
         &self,
         transaction: Transaction,

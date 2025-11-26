@@ -6,7 +6,10 @@ use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder};
 
 use coinshift::types::{Address, Txid};
 use coinshift_app_rpc_api::RpcClient;
-use tracing_subscriber::layer::SubscriberExt as _;
+use tracing_subscriber::{
+    filter::Targets,
+    layer::SubscriberExt as _,
+};
 
 #[derive(Clone, Debug, Subcommand)]
 #[command(arg_required_else_help(true))]
@@ -101,11 +104,15 @@ pub struct Cli {
     #[arg(default_value = "http://localhost:6255", long)]
     pub rpc_url: url::Url,
 
-    #[arg(long, help = "Timeout for RPC requests in seconds (default: 60)")]
+    #[arg(long, help = "Timeout for RPC requests in seconds (default: 300)")]
     pub timeout: Option<u64>,
 
     #[arg(short, long, help = "Enable verbose HTTP output")]
     pub verbose: bool,
+
+    /// Log level
+    #[arg(default_value_t = tracing::Level::INFO, long)]
+    pub log_level: tracing::Level,
 
     #[command(subcommand)]
     pub command: Command,
@@ -248,24 +255,26 @@ where
     })
 }
 
-fn set_tracing_subscriber() -> anyhow::Result<()> {
+fn set_tracing_subscriber(log_level: tracing::Level) -> anyhow::Result<()> {
+    let filter = Targets::new().with_default(log_level);
+    
     let stdout_layer = tracing_subscriber::fmt::layer()
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
         .with_file(true)
         .with_line_number(true);
 
-    let subscriber = tracing_subscriber::registry().with(stdout_layer);
+    let subscriber = tracing_subscriber::registry()
+        .with(filter)
+        .with(stdout_layer);
     tracing::subscriber::set_global_default(subscriber)?;
     Ok(())
 }
 
 impl Cli {
     pub async fn run(self) -> anyhow::Result<String> {
-        if self.verbose {
-            set_tracing_subscriber()?;
-        }
+        set_tracing_subscriber(self.log_level)?;
 
-        const DEFAULT_TIMEOUT: u64 = 60;
+        const DEFAULT_TIMEOUT: u64 = 300;
 
         let request_id = uuid::Uuid::new_v4().as_simple().to_string();
 

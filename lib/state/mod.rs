@@ -574,11 +574,9 @@ impl State {
         rwtxn: &mut RwTxn,
         swap_id: &SwapId,
     ) -> Result<(), Error> {
-        // Get swap
+        // Get swap - use get_swap which handles deserialization errors gracefully
         let mut swap = self
-            .swaps
-            .try_get(rwtxn, swap_id)
-            .map_err(DbError::from)?
+            .get_swap(rwtxn, swap_id)?
             .ok_or(Error::SwapNotFound {
                 swap_id: *swap_id,
             })?;
@@ -629,41 +627,42 @@ impl State {
         swap_id: &SwapId,
     ) -> Result<(), Error> {
         // Get swap to update indexes
-        let swap = self
-            .swaps
-            .try_get(rwtxn, swap_id)
-            .map_err(DbError::from)?
-            .ok_or(Error::SwapNotFound {
-                swap_id: *swap_id,
-            })?;
+        // Use get_swap which handles deserialization errors gracefully
+        if let Some(swap) = self.get_swap(rwtxn, swap_id)? {
+            // Delete from swaps_by_l1_txid
+            let l1_txid_key = (swap.parent_chain, swap.l1_txid.clone());
+            self.swaps_by_l1_txid
+                .delete(rwtxn, &l1_txid_key)
+                .map_err(DbError::from)?;
 
-        // Delete from swaps_by_l1_txid
-        let l1_txid_key = (swap.parent_chain, swap.l1_txid.clone());
-        self.swaps_by_l1_txid
-            .delete(rwtxn, &l1_txid_key)
-            .map_err(DbError::from)?;
-
-        // Update swaps_by_recipient index (only for pre-specified swaps)
-        if let Some(recipient) = swap.l2_recipient {
-            if let Some(mut recipient_swaps) = self
-                .swaps_by_recipient
-                .try_get(rwtxn, &recipient)
-                .map_err(DbError::from)?
-            {
-                recipient_swaps.retain(|id| *id != swap.id);
-                if recipient_swaps.is_empty() {
-                    self.swaps_by_recipient
-                        .delete(rwtxn, &recipient)
-                        .map_err(DbError::from)?;
-                } else {
-                    self.swaps_by_recipient
-                        .put(rwtxn, &recipient, &recipient_swaps)
-                        .map_err(DbError::from)?;
+            // Update swaps_by_recipient index (only for pre-specified swaps)
+            if let Some(recipient) = swap.l2_recipient {
+                if let Some(mut recipient_swaps) = self
+                    .swaps_by_recipient
+                    .try_get(rwtxn, &recipient)
+                    .map_err(DbError::from)?
+                {
+                    recipient_swaps.retain(|id| *id != swap.id);
+                    if recipient_swaps.is_empty() {
+                        self.swaps_by_recipient
+                            .delete(rwtxn, &recipient)
+                            .map_err(DbError::from)?;
+                    } else {
+                        self.swaps_by_recipient
+                            .put(rwtxn, &recipient, &recipient_swaps)
+                            .map_err(DbError::from)?;
+                    }
                 }
             }
+        } else {
+            // Swap not found or corrupted - log warning but still try to delete
+            tracing::warn!(
+                swap_id = %swap_id,
+                "Swap not found or corrupted when deleting, attempting to delete from database anyway"
+            );
         }
 
-        // Delete from main swaps database
+        // Delete from main swaps database (even if swap was corrupted/unreadable)
         self.swaps.delete(rwtxn, swap_id).map_err(DbError::from)?;
 
         Ok(())
@@ -674,8 +673,26 @@ impl State {
         rotxn: &RoTxn,
         swap_id: &SwapId,
     ) -> Result<Option<Swap>, Error> {
-        let swap = self.swaps.try_get(rotxn, swap_id)?;
-        Ok(swap)
+        match self.swaps.try_get(rotxn, swap_id) {
+            Ok(swap) => Ok(swap),
+            Err(err) => {
+                // If deserialization fails (corrupted data), log warning and return None
+                // This allows the system to continue working even with corrupted swap entries
+                let err_str = format!("{err:#}");
+                if err_str.contains("Decoding") || err_str.contains("InvalidTagEncoding") || err_str.contains("deserialize") {
+                    tracing::warn!(
+                        swap_id = %swap_id,
+                        error = %err,
+                        error_debug = ?err,
+                        "Failed to deserialize swap from database (corrupted data), treating as non-existent"
+                    );
+                    Ok(None)
+                } else {
+                    // For other errors, propagate them
+                    Err(err.into())
+                }
+            }
+        }
     }
 
     pub fn get_swap_by_l1_txid(
@@ -686,11 +703,8 @@ impl State {
     ) -> Result<Option<Swap>, Error> {
         let l1_txid_key = (*parent_chain, l1_txid.clone());
         if let Some(swap_id) = self.swaps_by_l1_txid.try_get(rotxn, &l1_txid_key)? {
-            let swap = self
-                .swaps
-                .try_get(rotxn, &swap_id)?
-                .ok_or(Error::SwapNotFound { swap_id })?;
-            Ok(Some(swap))
+            // Use get_swap which handles deserialization errors gracefully
+            self.get_swap(rotxn, &swap_id)
         } else {
             Ok(None)
         }
@@ -704,7 +718,8 @@ impl State {
         if let Some(swap_ids) = self.swaps_by_recipient.try_get(rotxn, recipient)? {
             let mut swaps = Vec::new();
             for swap_id in swap_ids {
-                if let Some(swap) = self.swaps.try_get(rotxn, &swap_id)? {
+                // Use get_swap which handles deserialization errors gracefully
+                if let Some(swap) = self.get_swap(rotxn, &swap_id)? {
                     swaps.push(swap);
                 }
             }
@@ -715,11 +730,32 @@ impl State {
     }
 
     pub fn load_all_swaps(&self, rotxn: &RoTxn) -> Result<Vec<Swap>, Error> {
-        let swaps: Vec<Swap> = self
-            .swaps
-            .iter(rotxn)?
-            .map(|(_, swap)| Ok(swap))
-            .collect()?;
+        let mut swaps = Vec::new();
+        let mut iter = self.swaps.iter(rotxn)?;
+        loop {
+            match iter.next() {
+                Ok(Some((_swap_id, swap))) => {
+                    swaps.push(swap);
+                }
+                Ok(None) => {
+                    // End of iterator
+                    break;
+                }
+                Err(err) => {
+                    // Log warning about corrupted swap
+                    // The error occurs during deserialization of a specific entry
+                    // Return the swaps we've collected so far rather than failing completely
+                    tracing::warn!(
+                        error = %err,
+                        loaded_swaps = swaps.len(),
+                        "Failed to deserialize swap from database, returning {} successfully loaded swaps",
+                        swaps.len()
+                    );
+                    // Return what we have so far - better than failing completely
+                    return Ok(swaps);
+                }
+            }
+        }
         Ok(swaps)
     }
 
@@ -874,8 +910,9 @@ impl State {
         rwtxn: &mut RwTxn,
         two_way_peg_data: &TwoWayPegData,
         rpc_config_getter: Option<&dyn Fn(ParentChainType) -> Option<crate::bitcoin_rpc::RpcConfig>>,
+        wallet: Option<&crate::wallet::Wallet>,
     ) -> Result<(), Error> {
-        two_way_peg_data::connect(self, rwtxn, two_way_peg_data, rpc_config_getter)
+        two_way_peg_data::connect(self, rwtxn, two_way_peg_data, rpc_config_getter, wallet)
     }
 
     pub fn disconnect_two_way_peg_data(

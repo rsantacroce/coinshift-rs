@@ -72,6 +72,7 @@ impl ConsoleLogs {
             timeout: None,
             command,
             verbose: false,
+            log_level: tracing::Level::INFO,
         };
         app.runtime.spawn({
             let running_command = self.running_command.clone();
