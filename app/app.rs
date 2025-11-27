@@ -219,26 +219,33 @@ impl App {
                     );
                     // Request missing ancestor infos - this will trigger deposit scanning
                     // when 2WPD is processed
+                    let start_time = std::time::Instant::now();
                     match node
                         .request_mainchain_ancestor_infos(l1_tip_hash)
                         .await
                     {
                         Ok(true) => {
+                            let elapsed = start_time.elapsed();
                             tracing::info!(
                                 l1_tip = %l1_tip_hash,
+                                elapsed_secs = elapsed.as_secs_f64(),
                                 "L1 sync task: Successfully requested L1 ancestor infos"
                             );
                         },
                         Ok(false) => {
+                            let elapsed = start_time.elapsed();
                             tracing::warn!(
                                 l1_tip = %l1_tip_hash,
+                                elapsed_secs = elapsed.as_secs_f64(),
                                 "L1 sync task: L1 ancestor infos request returned false (block not available)"
                             );
                         },
                         Err(err) => {
+                            let elapsed = start_time.elapsed();
                             tracing::debug!(
                                 error = %err,
                                 l1_tip = %l1_tip_hash,
+                                elapsed_secs = elapsed.as_secs_f64(),
                                 "L1 sync task: Failed to request L1 ancestor infos (this is normal if mainchain is not available)"
                             );
                         }
@@ -387,6 +394,7 @@ impl App {
         let local_pool = LocalPoolHandle::new(1);
 
         tracing::info!("Instantiating node struct");
+        let node_start = std::time::Instant::now();
         let node = Node::new(
             &config.datadir,
             config.net_addr,
@@ -396,21 +404,46 @@ impl App {
             &runtime,
             Some(Arc::new(wallet.clone())),
         )?;
-        tracing::info!("Node instantiated successfully");
+        let node_elapsed = node_start.elapsed();
+        tracing::info!(
+            elapsed_secs = node_elapsed.as_secs_f64(),
+            "Node instantiated successfully"
+        );
         
+        tracing::debug!("Initializing UTXOs");
+        let utxos_start = std::time::Instant::now();
         let utxos = {
+            tracing::debug!("Getting wallet UTXOs");
             let mut utxos = wallet.get_utxos()?;
+            tracing::debug!(utxo_count = utxos.len(), "Got wallet UTXOs");
+            tracing::debug!("Getting all transactions from mempool");
             let transactions = node.get_all_transactions()?;
+            tracing::debug!(
+                transaction_count = transactions.len(),
+                "Got all transactions from mempool"
+            );
             for transaction in &transactions {
                 for (outpoint, _) in &transaction.transaction.inputs {
                     utxos.remove(outpoint);
                 }
             }
+            tracing::debug!(
+                final_utxo_count = utxos.len(),
+                "UTXOs initialized after removing spent outputs"
+            );
             Arc::new(RwLock::new(utxos))
         };
+        let utxos_elapsed = utxos_start.elapsed();
+        tracing::info!(
+            elapsed_secs = utxos_elapsed.as_secs_f64(),
+            "UTXOs initialized"
+        );
+        tracing::debug!("Wrapping node in Arc");
         let node = Arc::new(node);
+        tracing::debug!("Node wrapped in Arc");
         
         // Check initial state
+        tracing::debug!("Checking initial sidechain state");
         if let Ok(Some(tip)) = node.try_get_best_hash() {
             if let Ok(Some(height)) = node.try_get_height() {
                 tracing::info!(
@@ -423,15 +456,19 @@ impl App {
             tracing::info!("No sidechain tip found (chain is empty)");
         }
         
+        tracing::debug!("Wrapping miner in Arc and TokioRwLock");
         let miner = miner.map(|miner| Arc::new(TokioRwLock::new(miner)));
         tracing::info!("Spawning wallet update task");
         let task =
             Self::spawn_task(node.clone(), utxos.clone(), wallet.clone());
+        tracing::info!("Wallet update task spawned");
         
         // Spawn L1 sync task to periodically check for new deposits
         tracing::info!("Spawning L1 sync task for deposit scanning");
         let _l1_sync_task = Self::spawn_l1_sync_task(node.clone());
+        tracing::info!("L1 sync task spawned");
         
+        tracing::debug!("Dropping runtime guard");
         drop(rt_guard);
         tracing::info!("App initialization complete");
         Ok(Self {
