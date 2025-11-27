@@ -318,12 +318,12 @@ impl Net {
 
     pub const SEED_NODE_ADDRS: &[SocketAddr] = {
         const SIGNET_MINING_SERVER: SocketAddr = SocketAddr::new(
-            std::net::IpAddr::V4(std::net::Ipv4Addr::new(172, 105, 148, 135)),
+            std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0,0,1)),
             4000 + THIS_SIDECHAIN as u16,
         );
         // thunder.bip300.xyz
         const BIP300_XYZ: SocketAddr = SocketAddr::new(
-            std::net::IpAddr::V4(std::net::Ipv4Addr::new(95, 217, 243, 12)),
+            std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0,0,1)),
             4000 + THIS_SIDECHAIN as u16,
         );
         &[SIGNET_MINING_SERVER, BIP300_XYZ]
@@ -336,26 +336,39 @@ impl Net {
         state: State,
         bind_addr: SocketAddr,
     ) -> Result<(Self, PeerInfoRx), Error> {
+        tracing::debug!(bind_addr = %bind_addr, "Net::new: Starting initialization");
+        tracing::debug!("Net::new: Creating server endpoint");
         let (server, _) = make_server_endpoint(bind_addr)?;
+        tracing::debug!("Net::new: Server endpoint created");
         let active_peers = Arc::new(RwLock::new(HashMap::new()));
+        tracing::debug!("Net::new: Opening database transaction");
         let mut rwtxn = env.write_txn()?;
+        tracing::debug!("Net::new: Opening/creating known_peers database");
         let known_peers =
             match DatabaseUnique::open(env, &rwtxn, "known_peers")? {
-                Some(known_peers) => known_peers,
+                Some(known_peers) => {
+                    tracing::debug!("Net::new: Found existing known_peers database");
+                    known_peers
+                },
                 None => {
+                    tracing::debug!("Net::new: Creating new known_peers database");
                     let known_peers =
                         DatabaseUnique::create(env, &mut rwtxn, "known_peers")?;
                     for seed_node_addr in seed_node_addrs(network) {
+                        tracing::debug!(seed_node = %seed_node_addr, "Net::new: Adding seed node");
                         known_peers.put(&mut rwtxn, seed_node_addr, &())?;
                     }
                     known_peers
                 }
             };
+        tracing::debug!("Net::new: Creating net_version database");
         let version = DatabaseUnique::create(env, &mut rwtxn, "net_version")?;
         if version.try_get(&rwtxn, &())?.is_none() {
             version.put(&mut rwtxn, &(), &*VERSION)?;
         }
+        tracing::debug!("Net::new: Committing database transaction");
         rwtxn.commit().map_err(RwTxnError::from)?;
+        tracing::debug!("Net::new: Creating peer info channel");
         let (peer_info_tx, peer_info_rx) = mpsc::unbounded();
         let net = Net {
             server,
@@ -367,6 +380,7 @@ impl Net {
             known_peers,
             _version: version,
         };
+        tracing::debug!("Net::new: Reading known peers from database");
         #[allow(clippy::let_and_return)]
         let known_peers: Vec<_> = {
             let rotxn = env.read_txn().map_err(EnvError::from)?;
@@ -378,27 +392,43 @@ impl Net {
                 .map_err(DbError::from)?;
             known_peers
         };
+        tracing::info!(peer_count = known_peers.len(), "Net::new: Connecting to known peers");
+        let connection_start = std::time::Instant::now();
         let () = known_peers.into_iter().try_for_each(|(peer_addr, _)| {
-            tracing::trace!(
-                "new net: connecting to already known peer at {peer_addr}"
+            tracing::debug!(
+                peer_addr = %peer_addr,
+                "Net::new: Attempting to connect to known peer"
             );
             match net.connect_peer(env.clone(), peer_addr) {
+                Ok(()) => {
+                    tracing::debug!(peer_addr = %peer_addr, "Net::new: Successfully initiated connection to peer");
+                    Ok(())
+                },
                 Err(Error::Connect(
                     quinn::ConnectError::InvalidRemoteAddress(addr),
                 )) => {
                     tracing::warn!(
-                        %addr, "new net: known peer with invalid remote address, removing"
+                        %addr, "Net::new: Known peer with invalid remote address, removing"
                     );
                     let mut rwtxn = env.write_txn()?;
                     net.known_peers.delete(&mut rwtxn, &peer_addr).map_err(DbError::from)?;
                     rwtxn.commit()?;
                     tracing::info!(
                         %addr,
-                        "new net: removed known peer with invalid remote address"
+                        "Net::new: Removed known peer with invalid remote address"
                     );
                     Ok(())
                 }
-                res => res,
+                res => {
+                    if let Err(ref err) = res {
+                        tracing::debug!(
+                            peer_addr = %peer_addr,
+                            error = %err,
+                            "Net::new: Connection attempt result"
+                        );
+                    }
+                    res
+                }
             }
         })
         // TODO: would be better to indicate this in the return error? tbh I want to scrap
@@ -406,6 +436,12 @@ impl Net {
         .inspect_err(|err| {
             tracing::error!("unable to connect to known peers during net construction: {err:#}");
         })?;
+        let connection_elapsed = connection_start.elapsed();
+        tracing::info!(
+            elapsed_secs = connection_elapsed.as_secs_f64(),
+            "Net::new: Finished connecting to known peers"
+        );
+        tracing::info!("Net::new: Initialization complete");
         Ok((net, peer_info_rx))
     }
 

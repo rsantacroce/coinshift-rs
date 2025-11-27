@@ -23,7 +23,7 @@ const SHIFT_ENTER: KeyboardShortcut = KeyboardShortcut {
 #[command(name(""), no_binary_name(true))]
 pub struct ConsoleCommand {
     #[command(subcommand)]
-    command: thunder_app_cli_lib::Command,
+    command: coinshift_app_cli_lib::Command,
 }
 
 pub struct ConsoleLogs {
@@ -67,11 +67,12 @@ impl ConsoleLogs {
                 return;
             }
         };
-        let cli = thunder_app_cli_lib::Cli {
+        let cli = coinshift_app_cli_lib::Cli {
             rpc_url: self.rpc_addr.clone(),
             timeout: None,
             command,
             verbose: false,
+            log_level: tracing::Level::INFO,
         };
         app.runtime.spawn({
             let running_command = self.running_command.clone();

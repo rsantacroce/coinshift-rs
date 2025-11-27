@@ -5,19 +5,21 @@ use std::collections::{BTreeMap, HashMap};
 use fallible_iterator::FallibleIterator;
 use sneed::{RoTxn, RwTxn, db::error::Error as DbError};
 
+use crate::bitcoin_rpc::{BitcoinRpcClient, RpcConfig};
 use crate::{
     state::{
         Error, State, WITHDRAWAL_BUNDLE_FAILURE_GAP, WithdrawalBundleInfo,
         rollback::RollBack,
     },
     types::{
-        AccumulatorDiff, AggregatedWithdrawal, AmountOverflowError, InPoint,
-        M6id, OutPoint, OutPointKey, Output, OutputContent, ParentChainType,
+        AccumulatorDiff, AggregatedWithdrawal, AmountOverflowError, GetValue,
+        InPoint, M6id, OutPoint, OutPointKey, Output, OutputContent,
         PointedOutput, PointedOutputRef, SpentOutput, Swap, SwapState,
-        SwapTxId, WithdrawalBundle, WithdrawalBundleEvent,
-        WithdrawalBundleStatus, hash,
+        WithdrawalBundle, WithdrawalBundleEvent, WithdrawalBundleStatus, hash,
+        ParentChainType, SwapTxId,
         proto::mainchain::{BlockEvent, TwoWayPegData},
     },
+    wallet::Wallet,
 };
 
 fn collect_withdrawal_bundle(
@@ -118,6 +120,37 @@ fn connect_withdrawal_bundle_submitted(
         && bundle.compute_m6id() == m6id
     {
         assert_eq!(bundle_block_height, block_height - 1);
+        
+        // Calculate total withdrawal amount from bundle outputs
+        let total_withdrawal_value: bitcoin::Amount = bundle
+            .tx()
+            .output
+            .iter()
+            .skip(2) // Skip mainchain_fee_txout and inputs_commitment_txout
+            .map(|txout| txout.value)
+            .sum();
+        
+        // Calculate total value being withdrawn from spend_utxos
+        let total_spent_value: bitcoin::Amount = bundle
+            .spend_utxos()
+            .iter()
+            .map(|(_, output)| GetValue::get_value(&output.content))
+            .sum();
+        
+        let output_count = bundle.tx().output.len().saturating_sub(2);
+        
+        tracing::info!(
+            %block_height,
+            %event_block_hash,
+            %m6id,
+            total_withdrawal_btc = %total_withdrawal_value.to_string_in(bitcoin::Denomination::Bitcoin),
+            total_withdrawal_sats = %total_withdrawal_value.to_sat(),
+            total_spent_btc = %total_spent_value.to_string_in(bitcoin::Denomination::Bitcoin),
+            total_spent_sats = %total_spent_value.to_sat(),
+            output_count = output_count,
+            "Withdrawal bundle submitted to parent chain"
+        );
+        
         tracing::debug!(
             %block_height,
             %m6id,
@@ -213,6 +246,39 @@ fn connect_withdrawal_bundle_confirmed(
         bundle_status.latest().value,
         WithdrawalBundleStatus::Submitted
     );
+    
+    // Log withdrawal bundle confirmation
+    match &bundle {
+        WithdrawalBundleInfo::Known(bundle) => {
+            let total_withdrawal_value: bitcoin::Amount = bundle
+                .tx()
+                .output
+                .iter()
+                .skip(2) // Skip mainchain_fee_txout and inputs_commitment_txout
+                .map(|txout| txout.value)
+                .sum();
+            
+            let output_count = bundle.tx().output.len().saturating_sub(2);
+            
+            tracing::info!(
+                %block_height,
+                %event_block_hash,
+                %m6id,
+                total_withdrawal_btc = %total_withdrawal_value.to_string_in(bitcoin::Denomination::Bitcoin),
+                total_withdrawal_sats = %total_withdrawal_value.to_sat(),
+                output_count = output_count,
+                "Withdrawal bundle confirmed on parent chain"
+            );
+        }
+        WithdrawalBundleInfo::Unknown | WithdrawalBundleInfo::UnknownConfirmed { .. } => {
+            tracing::info!(
+                %block_height,
+                %event_block_hash,
+                %m6id,
+                "Unknown withdrawal bundle confirmed on parent chain"
+            );
+        }
+    }
     // If an unknown bundle is confirmed, all UTXOs older than the
     // bundle submission are potentially spent.
     // This is only accepted in the case that block height is 0,
@@ -274,10 +340,6 @@ fn connect_withdrawal_bundle_failed(
     accumulator_diff: &mut AccumulatorDiff,
     m6id: M6id,
 ) -> Result<(), Error> {
-    tracing::debug!(
-        %block_height,
-        %m6id,
-        "Handling failed withdrawal bundle");
     let (bundle, mut bundle_status) = state
         .withdrawal_bundles
         .try_get(rwtxn, &m6id)
@@ -291,6 +353,42 @@ fn connect_withdrawal_bundle_failed(
         bundle_status.latest().value,
         WithdrawalBundleStatus::Submitted
     );
+    
+    // Log withdrawal bundle failure
+    match &bundle {
+        WithdrawalBundleInfo::Known(bundle) => {
+            let total_withdrawal_value: bitcoin::Amount = bundle
+                .tx()
+                .output
+                .iter()
+                .skip(2) // Skip mainchain_fee_txout and inputs_commitment_txout
+                .map(|txout| txout.value)
+                .sum();
+            
+            let output_count = bundle.tx().output.len().saturating_sub(2);
+            
+            tracing::warn!(
+                %block_height,
+                %m6id,
+                total_withdrawal_btc = %total_withdrawal_value.to_string_in(bitcoin::Denomination::Bitcoin),
+                total_withdrawal_sats = %total_withdrawal_value.to_sat(),
+                output_count = output_count,
+                "Withdrawal bundle failed on parent chain"
+            );
+        }
+        WithdrawalBundleInfo::Unknown | WithdrawalBundleInfo::UnknownConfirmed { .. } => {
+            tracing::warn!(
+                %block_height,
+                %m6id,
+                "Unknown withdrawal bundle failed on parent chain"
+            );
+        }
+    }
+    
+    tracing::debug!(
+        %block_height,
+        %m6id,
+        "Handling failed withdrawal bundle");
     bundle_status
         .push(WithdrawalBundleStatus::Failed, block_height)
         .expect("Push failed status should be valid");
@@ -385,11 +483,49 @@ fn connect_event(
     latest_withdrawal_bundle_event_block_hash: &mut Option<bitcoin::BlockHash>,
     event_block_hash: bitcoin::BlockHash,
     event: &BlockEvent,
+    wallet: Option<&Wallet>,
 ) -> Result<(), Error> {
     match event {
         BlockEvent::Deposit(deposit) => {
             let outpoint = OutPoint::Deposit(deposit.outpoint);
             let output = &deposit.output;
+            
+            // Extract value and address for logging
+            let value = output.content.get_value();
+            let address = output.address;
+            
+            // Check if the address belongs to our wallet
+            let address_belongs_to_wallet = if let Some(wallet) = wallet {
+                wallet.has_address(&address).unwrap_or(false)
+            } else {
+                // If no wallet is provided, we can't verify, so skip the check
+                // This allows the code to work in contexts where wallet isn't available
+                true
+            };
+            
+            if !address_belongs_to_wallet {
+                tracing::warn!(
+                    %block_height,
+                    %event_block_hash,
+                    outpoint = %outpoint,
+                    address = %address,
+                    amount_btc = %value.to_string_in(bitcoin::Denomination::Bitcoin),
+                    amount_sats = %value.to_sat(),
+                    "Deposit from parent chain received but address does not belong to wallet, skipping"
+                );
+                return Ok(());
+            }
+            
+            tracing::info!(
+                %block_height,
+                %event_block_hash,
+                outpoint = %outpoint,
+                address = %address,
+                amount_btc = %value.to_string_in(bitcoin::Denomination::Bitcoin),
+                amount_sats = %value.to_sat(),
+                "Deposit from parent chain received"
+            );
+            
             state
                 .utxos
                 .put(rwtxn, &OutPointKey::from(&outpoint), output)
@@ -425,13 +561,115 @@ fn connect_event(
 /// 2. For each swap, query swap.parent_chain (e.g., Signet) for transactions
 /// 3. Match transactions by: l1_recipient_address and l1_amount
 /// 4. Update swap state based on found transactions and confirmations
+/// Query L1 blockchain for matching transactions and update swap
+fn query_and_update_swap(
+    rpc_config: &RpcConfig,
+    swap: &mut Swap,
+    l1_recipient: &str,
+    l1_amount: bitcoin::Amount,
+) -> Result<bool, crate::bitcoin_rpc::Error> {
+    let client = BitcoinRpcClient::new(rpc_config.clone());
+    let amount_sats = l1_amount.to_sat();
+    
+    // Find transactions matching address and amount
+    let matches = client.find_transactions_by_address_and_amount(l1_recipient, amount_sats)?;
+    
+    if matches.is_empty() {
+        return Ok(false);
+    }
+    
+    // Use the first match (most recent transaction)
+    // In a production system, you might want to handle multiple matches differently
+    let (txid, confirmations, sender_address) = &matches[0];
+    
+    // Convert txid string to SwapTxId
+    let txid_bytes = hex::decode(txid)
+        .map_err(|_| crate::bitcoin_rpc::Error::InvalidResponse)?;
+    let l1_txid = SwapTxId::from_bytes(&txid_bytes);
+    
+    // Check if this is an update or new detection
+    let zero_hash32 = [0u8; 32];
+    let is_new = matches!(swap.l1_txid, SwapTxId::Hash32(h) if h == zero_hash32) 
+        || matches!(swap.l1_txid, SwapTxId::Hash(ref v) if v.is_empty() || v.iter().all(|&b| b == 0));
+    
+    if is_new {
+        // New L1 transaction detected
+        tracing::info!(
+            swap_id = %swap.id,
+            l1_txid = %txid,
+            confirmations = %confirmations,
+            sender = %sender_address,
+            is_open_swap = %swap.l2_recipient.is_none(),
+            "Detected new L1 transaction for swap"
+        );
+        
+        // Update swap with L1 transaction
+        // For open swaps, we don't store the sender address here - the claimer will provide
+        // their L2 address when claiming, and we'll verify they sent the L1 transaction
+        swap.update_l1_txid(l1_txid);
+        
+        // Update state based on confirmations
+        if *confirmations >= swap.required_confirmations {
+            swap.state = SwapState::ReadyToClaim;
+        } else {
+            swap.state = SwapState::WaitingConfirmations {
+                current_confirmations: *confirmations,
+                required_confirmations: swap.required_confirmations,
+            };
+        }
+        
+        Ok(true)
+    } else {
+        // Update confirmations for existing transaction
+        let current_confirmations = match swap.state {
+            SwapState::WaitingConfirmations { current_confirmations, .. } => current_confirmations,
+            _ => 0,
+        };
+        
+        if *confirmations > current_confirmations {
+            tracing::debug!(
+                swap_id = %swap.id,
+                old_confirmations = %current_confirmations,
+                new_confirmations = %confirmations,
+                "Updating swap confirmations"
+            );
+            
+            if *confirmations >= swap.required_confirmations {
+                swap.state = SwapState::ReadyToClaim;
+            } else {
+                swap.state = SwapState::WaitingConfirmations {
+                    current_confirmations: *confirmations,
+                    required_confirmations: swap.required_confirmations,
+                };
+            }
+            
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
 fn process_coinshift_transactions(
     state: &State,
     rwtxn: &mut RwTxn,
     block_height: u32,
+    rpc_config_getter: Option<&dyn Fn(ParentChainType) -> Option<RpcConfig>>,
 ) -> Result<(), Error> {
+    tracing::debug!(%block_height, "Starting to scan enforcer for coinshift transactions");
+    
     // Get all pending swaps
     let swaps = state.load_all_swaps(rwtxn)?;
+    let total_swaps_count = swaps.len();
+    tracing::debug!(
+        %block_height,
+        swap_count = total_swaps_count,
+        "Loaded swaps from state, scanning enforcer for matching transactions"
+    );
+    
+    let mut pending_swaps_count = 0;
+    let mut expired_swaps_count = 0;
+    let mut scanned_swaps_count = 0;
     
     for mut swap in swaps {
         // Only process L2 → L1 swaps that are pending or waiting for confirmations
@@ -441,12 +679,36 @@ fn process_coinshift_transactions(
         ) {
             continue;
         }
+        
+        pending_swaps_count += 1;
+        let l1_amount_str = swap.l1_amount
+            .map(|amt| amt.to_string_in(bitcoin::Denomination::Bitcoin))
+            .unwrap_or_else(|| "N/A".to_string());
+        let l1_amount_sats = swap.l1_amount
+            .map(|amt| amt.to_sat())
+            .unwrap_or(0);
+        tracing::debug!(
+            swap_id = %swap.id,
+            parent_chain = ?swap.parent_chain,
+            l1_recipient_address = ?swap.l1_recipient_address,
+            l1_amount_btc = %l1_amount_str,
+            l1_amount_sats = %l1_amount_sats,
+            swap_state = ?swap.state,
+            "Checking swap for matching L1 transactions"
+        );
 
         // Check if swap has expired
         if let Some(expires_at) = swap.expires_at_height {
             if block_height >= expires_at {
+                tracing::info!(
+                    swap_id = %swap.id,
+                    block_height = %block_height,
+                    expires_at = %expires_at,
+                    "Swap expired, marking as cancelled"
+                );
                 swap.state = SwapState::Cancelled;
                 state.save_swap(rwtxn, &swap)?;
+                expired_swaps_count += 1;
                 continue;
             }
         }
@@ -459,17 +721,75 @@ fn process_coinshift_transactions(
         // - Swap target: Signet (for coinshift transactions)
         // - We query Signet for transactions, not Regtest!
         //
-        // TODO: Integrate with swap target chain client to query transactions
-        // This requires:
-        // 1. A client for each swap target chain (Signet, BTC, BCH, LTC)
-        // 2. Query transactions to swap.l1_recipient_address
-        // 3. Match by address and amount (swap.l1_amount)
-        // 4. Get transaction confirmations
-        // 5. Update swap state accordingly
-        //
-        // For now, we rely on external updates via update_swap_l1_txid
-        // The actual implementation should query the appropriate chain's RPC
+        let l1_recipient_str = swap.l1_recipient_address
+            .as_deref()
+            .unwrap_or("N/A");
+        let l1_amount_str = swap.l1_amount
+            .map(|amt| amt.to_string_in(bitcoin::Denomination::Bitcoin))
+            .unwrap_or_else(|| "N/A".to_string());
+        let l1_amount_sats = swap.l1_amount
+            .map(|amt| amt.to_sat())
+            .unwrap_or(0);
+        tracing::debug!(
+            swap_id = %swap.id,
+            parent_chain = ?swap.parent_chain,
+            l1_recipient_address = ?swap.l1_recipient_address,
+            l1_amount_btc = %l1_amount_str,
+            l1_amount_sats = %l1_amount_sats,
+            "Scanning enforcer on {:?} for transactions to {} with amount {} BTC",
+            swap.parent_chain,
+            l1_recipient_str,
+            l1_amount_str
+        );
+        
+        // Query L1 blockchain for matching transactions if RPC config is available
+        // Clone values to avoid borrow checker issues
+        let l1_recipient_clone = swap.l1_recipient_address.clone();
+        let l1_amount_clone = swap.l1_amount;
+        let parent_chain_clone = swap.parent_chain;
+        if let (Some(l1_recipient), Some(l1_amount)) = (l1_recipient_clone.as_deref(), l1_amount_clone) {
+            if let Some(get_rpc_config) = rpc_config_getter {
+                if let Some(rpc_config) = get_rpc_config(parent_chain_clone) {
+                    match query_and_update_swap(
+                        &rpc_config,
+                        &mut swap,
+                        l1_recipient,
+                        l1_amount,
+                    ) {
+                        Ok(updated) => {
+                            if updated {
+                                tracing::info!(
+                                    swap_id = %swap.id,
+                                    l1_txid = ?swap.l1_txid,
+                                    state = ?swap.state,
+                                    "Updated swap with L1 transaction"
+                                );
+                                state.save_swap(rwtxn, &swap)?;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                swap_id = %swap.id,
+                                error = %e,
+                                "Failed to query L1 blockchain for swap (this is normal if RPC is not configured)"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        
+        scanned_swaps_count += 1;
     }
+    
+    tracing::debug!(
+        %block_height,
+        total_swaps = total_swaps_count,
+        pending_swaps = pending_swaps_count,
+        expired_swaps = expired_swaps_count,
+        scanned_swaps = scanned_swaps_count,
+        "Finished scanning enforcer for coinshift transactions"
+    );
 
     Ok(())
 }
@@ -478,6 +798,8 @@ pub fn connect(
     state: &State,
     rwtxn: &mut RwTxn,
     two_way_peg_data: &TwoWayPegData,
+    rpc_config_getter: Option<&dyn Fn(ParentChainType) -> Option<RpcConfig>>,
+    wallet: Option<&Wallet>,
 ) -> Result<(), Error> {
     let block_height = state.try_get_height(rwtxn)?.ok_or(Error::NoTip)?;
     tracing::trace!(%block_height, "Connecting 2WPD...");
@@ -500,12 +822,13 @@ pub fn connect(
                 &mut latest_withdrawal_bundle_event_block_hash,
                 *event_block_hash,
                 event,
+                wallet,
             )?;
         }
     }
 
     // Process coinshift transactions after processing deposits/withdrawals
-    process_coinshift_transactions(state, rwtxn, block_height)?;
+    process_coinshift_transactions(state, rwtxn, block_height, rpc_config_getter)?;
     // Handle deposits.
     if let Some(latest_deposit_block_hash) = latest_deposit_block_hash {
         let deposit_block_seq_idx = state

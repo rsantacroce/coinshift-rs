@@ -110,6 +110,7 @@ pub struct Node<MainchainTransport = Channel> {
     net: Net,
     net_task: NetTaskHandle,
     state: State,
+    wallet: Option<Arc<crate::wallet::Wallet>>,
 }
 
 impl<MainchainTransport> Node<MainchainTransport>
@@ -125,6 +126,7 @@ where
         >,
         network: Network,
         runtime: &tokio::runtime::Runtime,
+        wallet: Option<Arc<crate::wallet::Wallet>>,
     ) -> Result<Self, Error>
     where
         mainchain::ValidatorClient<MainchainTransport>: Clone,
@@ -133,9 +135,12 @@ where
             tonic::body::BoxBody,
         >>::Future: Send,
     {
+        tracing::info!("Node::new: Starting initialization");
         let env_path = datadir.join("data.mdb");
+        tracing::debug!(env_path = %env_path.display(), "Node::new: Setting up database path");
         // let _ = std::fs::remove_dir_all(&env_path);
         std::fs::create_dir_all(&env_path)?;
+        tracing::debug!("Node::new: Database directory created/verified");
         let env = {
             use heed::EnvFlags;
             let mut env_open_opts = heed::EnvOpenOptions::new();
@@ -169,21 +174,35 @@ where
                 | EnvFlags::NO_READ_AHEAD
                 | EnvFlags::NO_TLS;
             unsafe { env_open_opts.flags(fast_flags) };
-            unsafe { Env::open(&env_open_opts, &env_path) }
-                .map_err(EnvError::from)?
+            tracing::debug!("Node::new: Opening database environment");
+            let env = unsafe { Env::open(&env_open_opts, &env_path) }
+                .map_err(EnvError::from)?;
+            tracing::info!("Node::new: Database environment opened successfully");
+            env
         };
+        tracing::debug!("Node::new: Creating State");
         let state = State::new(&env)?;
+        tracing::debug!("Node::new: State created");
+        tracing::debug!("Node::new: Creating Archive");
         let archive = Archive::new(&env)?;
+        tracing::debug!("Node::new: Archive created");
+        tracing::debug!("Node::new: Creating MemPool");
         let mempool = MemPool::new(&env)?;
+        tracing::debug!("Node::new: MemPool created");
+        tracing::info!("Node::new: Creating MainchainTaskHandle");
         let (mainchain_task, mainchain_task_response_rx) =
             MainchainTaskHandle::new(
                 env.clone(),
                 archive.clone(),
                 cusf_mainchain.clone(),
             );
+        tracing::info!("Node::new: MainchainTaskHandle created");
+        tracing::info!(bind_addr = %bind_addr, "Node::new: Creating Net");
         let (net, peer_info_rx) =
             Net::new(&env, archive.clone(), network, state.clone(), bind_addr)?;
-
+        tracing::info!("Node::new: Net created");
+        tracing::info!("Node::new: Creating NetTaskHandle");
+        let wallet_clone = wallet.clone();
         let net_task = NetTaskHandle::new(
             runtime,
             env.clone(),
@@ -194,9 +213,12 @@ where
             net.clone(),
             peer_info_rx,
             state.clone(),
+            wallet_clone,
         );
+        tracing::info!("Node::new: NetTaskHandle created");
         let cusf_mainchain_wallet =
             cusf_mainchain_wallet.map(|wallet| Arc::new(Mutex::new(wallet)));
+        tracing::info!("Node::new: Initialization complete, returning Node instance");
         Ok(Self {
             archive,
             cusf_mainchain: Arc::new(Mutex::new(cusf_mainchain)),
@@ -207,6 +229,7 @@ where
             net,
             net_task,
             state,
+            wallet,
         })
     }
 

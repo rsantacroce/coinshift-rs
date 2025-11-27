@@ -93,6 +93,7 @@ where
         cusf_mainchain: &mut proto::mainchain::ValidatorClient<Transport>,
         block_hash: bitcoin::BlockHash,
     ) -> Result<bool, ResponseError> {
+        let start_time = Instant::now();
         if block_hash == bitcoin::BlockHash::all_zeros() {
             return Ok(true);
         } else {
@@ -101,42 +102,71 @@ where
                 .try_get_main_header_info(&rotxn, &block_hash)?
                 .is_some()
             {
+                tracing::debug!(%block_hash, "request_ancestor_infos: block already in archive");
                 return Ok(true);
             }
         }
+        tracing::info!(%block_hash, "request_ancestor_infos: Starting to request ancestor headers/info");
         let mut current_block_hash = block_hash;
         let mut current_height = None;
         let mut block_infos =
             Vec::<(mainchain::BlockHeaderInfo, mainchain::BlockInfo)>::new();
-        tracing::debug!(%block_hash, "requesting ancestor headers/info");
         const LOG_PROGRESS_INTERVAL: Duration = Duration::from_secs(5);
         const BATCH_REQUEST_SIZE: u32 = 1000;
         let mut progress_logged = Instant::now();
+        let mut batch_count = 0;
         loop {
+            batch_count += 1;
+            let batch_start = Instant::now();
             if let Some(current_height) = current_height {
                 let now = Instant::now();
                 if now.duration_since(progress_logged) >= LOG_PROGRESS_INTERVAL
                 {
                     progress_logged = now;
-                    tracing::debug!(
+                    tracing::info!(
                         %block_hash,
-                        "requesting ancestor headers: {current_block_hash}({current_height} remaining)");
+                        batch = batch_count,
+                        blocks_collected = block_infos.len(),
+                        current_block = %current_block_hash,
+                        height_remaining = current_height,
+                        elapsed_secs = start_time.elapsed().as_secs_f64(),
+                        "request_ancestor_infos: Requesting ancestor headers batch"
+                    );
                 }
-                tracing::trace!(%block_hash, "requesting ancestor headers: {current_block_hash}({current_height})")
+                tracing::debug!(%block_hash, batch = batch_count, "requesting ancestor headers: {current_block_hash}({current_height})")
+            } else {
+                tracing::info!(
+                    %block_hash,
+                    batch = batch_count,
+                    "request_ancestor_infos: Requesting first batch from tip"
+                );
             }
             let Some(block_infos_resp) = cusf_mainchain
                 .get_block_infos(current_block_hash, BATCH_REQUEST_SIZE - 1)
                 .await?
             else {
+                tracing::warn!(%block_hash, "request_ancestor_infos: Block not available from mainchain");
                 return Ok(false);
             };
+            let batch_elapsed = batch_start.elapsed();
+            let batch_size = block_infos_resp.len();
             {
                 let (current_header, _) = block_infos_resp.last();
                 current_block_hash = current_header.prev_block_hash;
                 current_height = current_header.height.checked_sub(1);
             }
             block_infos.extend(block_infos_resp);
+            tracing::info!(
+                %block_hash,
+                batch = batch_count,
+                batch_size = batch_size,
+                total_blocks = block_infos.len(),
+                batch_elapsed_secs = batch_elapsed.as_secs_f64(),
+                next_height = ?current_height,
+                "request_ancestor_infos: Received batch, processing next"
+            );
             if current_block_hash == bitcoin::BlockHash::all_zeros() {
+                tracing::info!(%block_hash, "request_ancestor_infos: Reached genesis block");
                 break;
             } else {
                 let rotxn = env.read_txn().map_err(EnvError::from)?;
@@ -144,15 +174,30 @@ where
                     .try_get_main_header_info(&rotxn, &current_block_hash)?
                     .is_some()
                 {
+                    tracing::info!(
+                        %block_hash,
+                        found_at = %current_block_hash,
+                        "request_ancestor_infos: Found existing block in archive, stopping"
+                    );
                     break;
                 }
             }
         }
+        let fetch_elapsed = start_time.elapsed();
+        tracing::info!(
+            %block_hash,
+            total_blocks = block_infos.len(),
+            batches = batch_count,
+            fetch_elapsed_secs = fetch_elapsed.as_secs_f64(),
+            "request_ancestor_infos: Finished fetching, reversing and storing"
+        );
         block_infos.reverse();
         // Writing all headers during IBD can starve archive readers.
-        tracing::trace!(%block_hash, "storing ancestor headers/info");
-        task::block_in_place(|| {
+        let store_start = Instant::now();
+        tracing::info!(%block_hash, "request_ancestor_infos: Starting to store ancestor headers/info to archive");
+        let stored_count: usize = task::block_in_place(|| -> Result<usize, ResponseError> {
             let mut rwtxn = env.write_txn().map_err(EnvError::from)?;
+            let mut stored_count = 0;
             for (header_info, block_info) in block_infos {
                 let () =
                     archive.put_main_header_info(&mut rwtxn, &header_info)?;
@@ -161,11 +206,29 @@ where
                     header_info.block_hash,
                     &block_info,
                 )?;
+                stored_count += 1;
+                if stored_count % 1000 == 0 {
+                    tracing::info!(
+                        %block_hash,
+                        stored = stored_count,
+                        "request_ancestor_infos: Stored {} blocks so far",
+                        stored_count
+                    );
+                }
             }
             rwtxn.commit().map_err(RwTxnError::from)?;
-            tracing::trace!(%block_hash, "stored ancestor headers/info");
-            Ok(true)
-        })
+            Ok(stored_count)
+        })?;
+        let store_elapsed = store_start.elapsed();
+        let total_elapsed = start_time.elapsed();
+        tracing::info!(
+            %block_hash,
+            blocks_stored = stored_count,
+            store_elapsed_secs = store_elapsed.as_secs_f64(),
+            total_elapsed_secs = total_elapsed.as_secs_f64(),
+            "request_ancestor_infos: Successfully stored all ancestor headers/info"
+        );
+        Ok(true)
     }
 
     async fn run(mut self) -> Result<(), Error> {

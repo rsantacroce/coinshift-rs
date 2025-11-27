@@ -91,6 +91,7 @@ fn connect_tip_(
     header: &Header,
     body: &Body,
     two_way_peg_data: &mainchain::TwoWayPegData,
+    wallet: Option<&crate::wallet::Wallet>,
 ) -> Result<(), Error> {
     let block_hash = header.hash();
     let prevalidated = state.prevalidate_block(rwtxn, header, body)?;
@@ -111,7 +112,7 @@ fn connect_tip_(
             prevalidated,
         )?;
     }
-    let () = state.connect_two_way_peg_data(rwtxn, two_way_peg_data)?;
+    let () = state.connect_two_way_peg_data(rwtxn, two_way_peg_data, None, wallet)?;
     let accumulator = state.get_accumulator(rwtxn)?;
     let () = archive.put_header(rwtxn, header)?;
     let () = archive.put_body(rwtxn, block_hash, body)?;
@@ -204,12 +205,24 @@ fn disconnect_tip_(
                 Ok(Some(ancestor) != start_block_hash.as_ref())
             })
             .filter_map(|ancestor| {
-                let block_info =
-                    archive.get_main_block_info(rwtxn, &ancestor)?;
-                if block_info.events.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some((ancestor, block_info)))
+                match archive.try_get_main_block_info(rwtxn, &ancestor) {
+                    Ok(Some(block_info)) => {
+                        if block_info.events.is_empty() {
+                            Ok(None)
+                        } else {
+                            Ok(Some((ancestor, block_info)))
+                        }
+                    }
+                    Ok(None) => {
+                        // Mainchain block info is missing - this can happen on startup
+                        // if mainchain data hasn't been fetched yet. Skip this block.
+                        tracing::warn!(
+                            %ancestor,
+                            "Mainchain block info missing during disconnect, skipping"
+                        );
+                        Ok(None)
+                    }
+                    Err(e) => Err(e),
                 }
             })
             .collect()?;
@@ -256,6 +269,7 @@ fn reorg_to_tip(
     mempool: &MemPool,
     state: &State,
     new_tip: Tip,
+    wallet: Option<&crate::wallet::Wallet>,
 ) -> Result<bool, Error> {
     let mut rwtxn = env.write_txn().map_err(EnvError::from)?;
     let tip_height = state.try_get_height(&rwtxn)?;
@@ -359,10 +373,21 @@ fn reorg_to_tip(
             .take_while(|ancestor| {
                 Ok(Some(ancestor) != common_ancestor_prev_main_hash.as_ref())
             })
-            .map(|ancestor| {
-                let block_info =
-                    archive.get_main_block_info(&rwtxn, &ancestor)?;
-                Ok((ancestor, block_info))
+            .filter_map(|ancestor| {
+                match archive.try_get_main_block_info(&rwtxn, &ancestor) {
+                    Ok(Some(block_info)) => Ok(Some((ancestor, block_info))),
+                    Ok(None) => {
+                        // Mainchain block info is missing - this can happen on startup
+                        // if mainchain data hasn't been fetched yet. Skip this block
+                        // and let the caller handle fetching it.
+                        tracing::warn!(
+                            %ancestor,
+                            "Mainchain block info missing, skipping from two-way peg data batch"
+                        );
+                        Ok(None)
+                    }
+                    Err(e) => Err(e),
+                }
             })
             .collect()?
     };
@@ -388,6 +413,7 @@ fn reorg_to_tip(
             &header,
             &body,
             &two_way_peg_data,
+            wallet,
         )?;
         let new_tip_hash = state.try_get_tip(&rwtxn)?.unwrap();
         let bmm_verification =
@@ -420,6 +446,7 @@ struct NetTaskContext {
     mempool: MemPool,
     net: Net,
     state: State,
+    wallet: Option<Arc<crate::wallet::Wallet>>,
 }
 
 /// Message indicating a tip that is ready to reorg to, with the address of the
@@ -1005,6 +1032,7 @@ impl NetTask {
                             &self.ctxt.mempool,
                             &self.ctxt.state,
                             new_tip,
+                            self.ctxt.wallet.as_deref(),
                         )
                     })?;
                     if let Some(resp_tx) = resp_tx {
@@ -1169,6 +1197,7 @@ impl NetTaskHandle {
         net: Net,
         peer_info_rx: PeerInfoRx,
         state: State,
+        wallet: Option<Arc<crate::wallet::Wallet>>,
     ) -> Self {
         let ctxt = NetTaskContext {
             env,
@@ -1177,6 +1206,7 @@ impl NetTaskHandle {
             mempool,
             net,
             state,
+            wallet,
         };
         let (
             forward_mainchain_task_request_tx,

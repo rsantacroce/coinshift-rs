@@ -4,7 +4,7 @@ use fallible_iterator::FallibleIterator as _;
 use futures::{StreamExt, TryFutureExt};
 use parking_lot::RwLock;
 use rustreexo::accumulator::proof::Proof;
-use thunder::{
+use coinshift::{
     miner::{self, Miner},
     node::{self, Node},
     types::{
@@ -28,13 +28,13 @@ use crate::cli::Config;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("CUSF mainchain proto error")]
-    CusfMainchain(#[from] thunder::types::proto::Error),
+    CusfMainchain(#[from] coinshift::types::proto::Error),
     #[error("io error")]
     Io(#[from] std::io::Error),
     #[error("miner error")]
     Miner(#[from] miner::Error),
     #[error(transparent)]
-    ModifyMemForest(#[from] thunder::types::ModifyMemForestError),
+    ModifyMemForest(#[from] coinshift::types::ModifyMemForestError),
     #[error("node error")]
     Node(#[source] Box<node::Error>),
     #[error("No CUSF mainchain wallet client")]
@@ -119,6 +119,153 @@ impl App {
         spawn(Self::task(node, utxos, wallet).unwrap_or_else(|err| {
             let err = anyhow::Error::from(err);
             tracing::error!("{err:#}")
+        }))
+    }
+
+    /// Periodic task to sync L1 blocks for deposit scanning
+    async fn l1_sync_task(node: Arc<Node>) -> Result<(), Error> {
+        use futures::FutureExt;
+        use std::time::Duration;
+        const SYNC_INTERVAL: Duration = Duration::from_secs(10);
+        
+        tracing::info!("L1 sync task started, will check every {} seconds", SYNC_INTERVAL.as_secs());
+        
+        loop {
+            tokio::time::sleep(SYNC_INTERVAL).await;
+            tracing::trace!("L1 sync task: checking for new L1 blocks");
+            
+            // Get current L1 chain tip
+            let l1_tip_hash = match node
+                .with_cusf_mainchain(|client| {
+                    client.get_chain_tip().map(|res| {
+                        res.map(|tip| tip.block_hash)
+                            .map_err(Error::CusfMainchain)
+                    }).boxed()
+                })
+                .await
+            {
+                Ok(hash) => {
+                    tracing::trace!(l1_tip = %hash, "L1 sync task: got L1 chain tip");
+                    hash
+                },
+                Err(err) => {
+                    tracing::debug!(
+                        error = %err,
+                        "L1 sync task: Failed to get L1 chain tip (this is normal if mainchain is not available)"
+                    );
+                    continue;
+                }
+            };
+            
+            // Get current sidechain tip's mainchain verification (latest synced L1 block)
+            let synced_main_hash = {
+                let rotxn = node.env().read_txn().map_err(node::Error::from)?;
+                if let Some(sidechain_tip) = node.try_get_best_hash()? {
+                    let result = node.archive()
+                        .try_get_best_main_verification(&rotxn, sidechain_tip)
+                        .map_err(node::Error::from)?;
+                    tracing::trace!(
+                        sidechain_tip = %sidechain_tip,
+                        synced_main = ?result,
+                        "L1 sync task: got synced main hash"
+                    );
+                    result
+                } else {
+                    tracing::trace!("L1 sync task: no sidechain tip found");
+                    None
+                }
+            };
+            
+            // Check if we need to sync more L1 blocks
+            // If we don't have a synced main hash yet, or if the L1 tip is ahead, sync
+            let needs_sync = match synced_main_hash {
+                Some(synced) => {
+                    let needs = l1_tip_hash != synced;
+                    tracing::trace!(
+                        l1_tip = %l1_tip_hash,
+                        synced_main = %synced,
+                        needs_sync = %needs,
+                        "L1 sync task: comparing tips"
+                    );
+                    needs
+                },
+                None => {
+                    tracing::trace!("L1 sync task: no synced main hash, need to sync");
+                    true // No synced main hash yet, need to sync
+                }
+            };
+            
+            if needs_sync {
+                // Check if we already have the L1 tip in our archive
+                let has_l1_tip = {
+                    let rotxn = node.env().read_txn().map_err(node::Error::from)?;
+                    let result = node.archive()
+                        .try_get_main_header_info(&rotxn, &l1_tip_hash)
+                        .map_err(node::Error::from)?
+                        .is_some();
+                    tracing::trace!(
+                        l1_tip = %l1_tip_hash,
+                        has_l1_tip = %result,
+                        "L1 sync task: checked if L1 tip is in archive"
+                    );
+                    result
+                };
+                
+                if !has_l1_tip {
+                    tracing::info!(
+                        l1_tip = %l1_tip_hash,
+                        synced_main = ?synced_main_hash,
+                        "L1 sync task: Syncing L1 blocks for deposit scanning"
+                    );
+                    // Request missing ancestor infos - this will trigger deposit scanning
+                    // when 2WPD is processed
+                    let start_time = std::time::Instant::now();
+                    match node
+                        .request_mainchain_ancestor_infos(l1_tip_hash)
+                        .await
+                    {
+                        Ok(true) => {
+                            let elapsed = start_time.elapsed();
+                            tracing::info!(
+                                l1_tip = %l1_tip_hash,
+                                elapsed_secs = elapsed.as_secs_f64(),
+                                "L1 sync task: Successfully requested L1 ancestor infos"
+                            );
+                        },
+                        Ok(false) => {
+                            let elapsed = start_time.elapsed();
+                            tracing::warn!(
+                                l1_tip = %l1_tip_hash,
+                                elapsed_secs = elapsed.as_secs_f64(),
+                                "L1 sync task: L1 ancestor infos request returned false (block not available)"
+                            );
+                        },
+                        Err(err) => {
+                            let elapsed = start_time.elapsed();
+                            tracing::debug!(
+                                error = %err,
+                                l1_tip = %l1_tip_hash,
+                                elapsed_secs = elapsed.as_secs_f64(),
+                                "L1 sync task: Failed to request L1 ancestor infos (this is normal if mainchain is not available)"
+                            );
+                        }
+                    }
+                } else {
+                    tracing::trace!(
+                        l1_tip = %l1_tip_hash,
+                        "L1 sync task: L1 tip already in archive, no sync needed"
+                    );
+                }
+            } else {
+                tracing::trace!("L1 sync task: L1 is up to date, no sync needed");
+            }
+        }
+    }
+
+    fn spawn_l1_sync_task(node: Arc<Node>) -> JoinHandle<()> {
+        spawn(Self::l1_sync_task(node).unwrap_or_else(|err| {
+            let err = anyhow::Error::from(err);
+            tracing::error!("L1 sync task error: {err:#}")
         }))
     }
 
@@ -216,8 +363,19 @@ impl App {
         .unwrap()
         .concurrency_limit(256)
         .connect_lazy();
+        // Add a timeout to the connection check so the GUI can start even if mainchain isn't synced
+        const CONNECTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
         let (cusf_mainchain, cusf_mainchain_wallet) = if runtime
-            .block_on(Self::check_proto_support(transport.clone()))
+            .block_on(tokio::time::timeout(
+                CONNECTION_TIMEOUT,
+                Self::check_proto_support(transport.clone()),
+            ))
+            .map_err(|_| Error::VerifyMainchainServices {
+                url: Box::new(config.mainchain_grpc_url.clone()),
+                source: Box::new(tonic::Status::deadline_exceeded(
+                    "Connection check timed out after 5 seconds",
+                )),
+            })?
             .map_err(|err| Error::VerifyMainchainServices {
                 url: Box::new(config.mainchain_grpc_url.clone()),
                 source: Box::new(err),
@@ -235,7 +393,8 @@ impl App {
             .transpose()?;
         let local_pool = LocalPoolHandle::new(1);
 
-        tracing::debug!("Instantiating node struct");
+        tracing::info!("Instantiating node struct");
+        let node_start = std::time::Instant::now();
         let node = Node::new(
             &config.datadir,
             config.net_addr,
@@ -243,22 +402,75 @@ impl App {
             cusf_mainchain_wallet,
             config.network,
             &runtime,
+            Some(Arc::new(wallet.clone())),
         )?;
+        let node_elapsed = node_start.elapsed();
+        tracing::info!(
+            elapsed_secs = node_elapsed.as_secs_f64(),
+            "Node instantiated successfully"
+        );
+        
+        tracing::debug!("Initializing UTXOs");
+        let utxos_start = std::time::Instant::now();
         let utxos = {
+            tracing::debug!("Getting wallet UTXOs");
             let mut utxos = wallet.get_utxos()?;
+            tracing::debug!(utxo_count = utxos.len(), "Got wallet UTXOs");
+            tracing::debug!("Getting all transactions from mempool");
             let transactions = node.get_all_transactions()?;
+            tracing::debug!(
+                transaction_count = transactions.len(),
+                "Got all transactions from mempool"
+            );
             for transaction in &transactions {
                 for (outpoint, _) in &transaction.transaction.inputs {
                     utxos.remove(outpoint);
                 }
             }
+            tracing::debug!(
+                final_utxo_count = utxos.len(),
+                "UTXOs initialized after removing spent outputs"
+            );
             Arc::new(RwLock::new(utxos))
         };
+        let utxos_elapsed = utxos_start.elapsed();
+        tracing::info!(
+            elapsed_secs = utxos_elapsed.as_secs_f64(),
+            "UTXOs initialized"
+        );
+        tracing::debug!("Wrapping node in Arc");
         let node = Arc::new(node);
+        tracing::debug!("Node wrapped in Arc");
+        
+        // Check initial state
+        tracing::debug!("Checking initial sidechain state");
+        if let Ok(Some(tip)) = node.try_get_best_hash() {
+            if let Ok(Some(height)) = node.try_get_height() {
+                tracing::info!(
+                    tip = %tip,
+                    height = %height,
+                    "Current sidechain tip"
+                );
+            }
+        } else {
+            tracing::info!("No sidechain tip found (chain is empty)");
+        }
+        
+        tracing::debug!("Wrapping miner in Arc and TokioRwLock");
         let miner = miner.map(|miner| Arc::new(TokioRwLock::new(miner)));
+        tracing::info!("Spawning wallet update task");
         let task =
             Self::spawn_task(node.clone(), utxos.clone(), wallet.clone());
+        tracing::info!("Wallet update task spawned");
+        
+        // Spawn L1 sync task to periodically check for new deposits
+        tracing::info!("Spawning L1 sync task for deposit scanning");
+        let _l1_sync_task = Self::spawn_l1_sync_task(node.clone());
+        tracing::info!("L1 sync task spawned");
+        
+        tracing::debug!("Dropping runtime guard");
         drop(rt_guard);
+        tracing::info!("App initialization complete");
         Ok(Self {
             node,
             wallet,
@@ -269,6 +481,7 @@ impl App {
                 inputs: vec![],
                 proof: Proof::default(),
                 outputs: vec![],
+                data: coinshift::types::TxData::Regular,
             })),
             runtime: Arc::new(runtime),
             local_pool,
@@ -281,9 +494,53 @@ impl App {
     }
 
     pub fn sign_and_send(&self, tx: Transaction) -> Result<(), Error> {
-        let authorized_transaction = self.wallet.authorize(tx)?;
-        self.node.submit_transaction(authorized_transaction)?;
-        let () = self.update()?;
+        let txid = tx.txid();
+        tracing::debug!(%txid, "sign_and_send: Starting transaction signing and sending");
+        
+        let authorized_transaction = match self.wallet.authorize(tx) {
+            Ok(auth_tx) => {
+                tracing::debug!(%txid, "sign_and_send: Transaction authorized successfully");
+                auth_tx
+            }
+            Err(err) => {
+                tracing::error!(%txid, error = %err, "sign_and_send: Failed to authorize transaction");
+                return Err(err.into());
+            }
+        };
+        
+        tracing::debug!(%txid, "sign_and_send: Submitting transaction to node");
+        match self.node.submit_transaction(authorized_transaction) {
+            Ok(()) => {
+                tracing::debug!(%txid, "sign_and_send: Transaction submitted to node successfully");
+            }
+            Err(err) => {
+                tracing::error!(
+                    %txid,
+                    error = %err,
+                    error_debug = ?err,
+                    "sign_and_send: Failed to submit transaction to node"
+                );
+                return Err(err.into());
+            }
+        }
+        
+        tracing::debug!(%txid, "sign_and_send: Updating wallet state");
+        match self.update() {
+            Ok(()) => {
+                tracing::debug!(%txid, "sign_and_send: Wallet updated successfully");
+            }
+            Err(err) => {
+                tracing::error!(
+                    %txid,
+                    error = %err,
+                    error_debug = ?err,
+                    "sign_and_send: Failed to update wallet"
+                );
+                return Err(err);
+            }
+        }
+        
+        tracing::info!(%txid, "sign_and_send: Transaction signed and sent successfully");
         Ok(())
     }
 
@@ -416,7 +673,7 @@ impl App {
                 } else {
                     types::Accumulator::default()
                 };
-                let merkle_root = thunder::types::Body::modify_memforest(
+                let merkle_root = coinshift::types::Body::modify_memforest(
                     &coinbase,
                     &txs,
                     &mut accumulator.0,
@@ -463,7 +720,7 @@ impl App {
                 } else {
                     types::Accumulator::default()
                 };
-                let merkle_root = thunder::types::Body::modify_memforest::<
+                let merkle_root = coinshift::types::Body::modify_memforest::<
                     FilledTransaction,
                 >(
                     &coinbase, &[], &mut accumulator.0
@@ -494,7 +751,7 @@ impl App {
         tracing::debug!(%bmm_txid, "mine: confirming BMM...");
         if let Some((main_hash, header, body)) =
             miner_write.confirm_bmm().await.inspect_err(|err| {
-                tracing::error!("{:#}", thunder::util::ErrorChain::new(err))
+                tracing::error!("{:#}", coinshift::util::ErrorChain::new(err))
             })?
         {
             tracing::debug!(
@@ -505,7 +762,7 @@ impl App {
                 .submit_block(main_hash, &header, &body)
                 .await
                 .inspect_err(|err| {
-                    tracing::error!("{:#}", thunder::util::ErrorChain::new(err))
+                    tracing::error!("{:#}", coinshift::util::ErrorChain::new(err))
                 })? {
                 true => {
                     tracing::debug!(
