@@ -560,22 +560,31 @@ impl State {
             "Saving swap to database"
         );
         
-        // Check if swap already exists and is corrupted - delete it first
-        match self.get_swap(rwtxn, &swap.id) {
-            Ok(Some(_)) => {
-                // Swap exists and is valid - will be overwritten
+        // Always delete any existing swap first (even if corrupted)
+        // This ensures we start with a clean slate and prevents issues with corrupted data
+        // The delete operation works on keys only, so it works even if the value is corrupted
+        match self.swaps.delete(rwtxn, &swap.id) {
+            Ok(true) => {
+                tracing::debug!(
+                    swap_id = %swap.id,
+                    "Deleted existing swap entry before saving new one"
+                );
             }
-            Ok(None) => {
-                // Swap doesn't exist - that's fine
+            Ok(false) => {
+                // Entry didn't exist, which is fine for new swaps
+                tracing::debug!(
+                    swap_id = %swap.id,
+                    "No existing swap to delete, continuing with save"
+                );
             }
-            Err(_) => {
-                // Swap exists but is corrupted - delete it first
+            Err(e) => {
+                // Deletion failed for some reason, but we'll continue anyway
+                // The put() operation should overwrite anyway
                 tracing::warn!(
                     swap_id = %swap.id,
-                    "Existing swap is corrupted, deleting before saving new one"
+                    error = %e,
+                    "Failed to delete existing swap, but continuing with save (put should overwrite)"
                 );
-                // Try to delete the corrupted swap directly from database
-                drop(self.swaps.delete(rwtxn, &swap.id));
             }
         }
         

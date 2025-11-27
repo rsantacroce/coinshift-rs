@@ -677,42 +677,99 @@ impl SwapList {
         };
         let l1_txid = SwapTxId::from_bytes(&l1_txid_bytes);
 
-        // Fetch confirmations from RPC if available
+        // Fetch transaction from RPC to validate amount and recipient address
         let confirmations = if let Some(rpc_config) = self.load_rpc_config(swap.parent_chain) {
             tracing::debug!(
                 swap_id = %swap.id,
                 l1_txid = %self.l1_txid_input,
                 rpc_url = %rpc_config.url,
-                "Fetching confirmations from RPC for swap update"
+                "Fetching transaction from RPC for validation and confirmations"
             );
             
             let client = BitcoinRpcClient::new(rpc_config);
-            match client.get_transaction_confirmations(&self.l1_txid_input) {
-                Ok(conf) => {
+            match client.get_transaction(&self.l1_txid_input) {
+                Ok(tx_info) => {
+                    let conf = tx_info.confirmations;
+                    
+                    // Validate transaction matches swap requirements
+                    let mut found_matching_output = false;
+                    
+                    // Check if swap has expected L1 recipient and amount
+                    if let (Some(expected_recipient), Some(expected_amount)) = 
+                        (&swap.l1_recipient_address, swap.l1_amount) 
+                    {
+                        let expected_amount_sats = expected_amount.to_sat();
+                        
+                        // Check all outputs for matching address and amount
+                        for vout in &tx_info.vout {
+                            let vout_value_sats = (vout.value * 100_000_000.0) as u64;
+                            let matches_address = vout.script_pub_key.address.as_ref()
+                                .map(|addr| addr == expected_recipient)
+                                .unwrap_or(false)
+                                || vout.script_pub_key.addresses.as_ref()
+                                    .map(|addrs| addrs.contains(expected_recipient))
+                                    .unwrap_or(false);
+                            
+                            if matches_address && vout_value_sats == expected_amount_sats {
+                                found_matching_output = true;
+                                tracing::info!(
+                                    swap_id = %swap.id,
+                                    l1_txid = %self.l1_txid_input,
+                                    recipient = %expected_recipient,
+                                    amount_sats = %expected_amount_sats,
+                                    "Transaction validated: matches swap requirements"
+                                );
+                                break;
+                            }
+                        }
+                        
+                        if !found_matching_output {
+                            tracing::error!(
+                                swap_id = %swap.id,
+                                l1_txid = %self.l1_txid_input,
+                                expected_recipient = %expected_recipient,
+                                expected_amount_sats = %expected_amount_sats,
+                                "Transaction validation failed: No output matches expected recipient address and amount"
+                            );
+                            return;
+                        }
+                    } else {
+                        // For swaps without expected recipient/amount, we can't validate
+                        // This might be an open swap or a swap without L1 details
+                        tracing::warn!(
+                            swap_id = %swap.id,
+                            l1_txid = %self.l1_txid_input,
+                            "Cannot validate transaction: swap missing expected L1 recipient address or amount"
+                        );
+                    }
+                    
                     tracing::info!(
                         swap_id = %swap.id,
                         l1_txid = %self.l1_txid_input,
                         confirmations = %conf,
-                        "Fetched confirmations from L1 RPC"
+                        "Fetched transaction and confirmations from L1 RPC"
                     );
+                    
                     conf
                 }
                 Err(err) => {
-                    tracing::warn!(
+                    tracing::error!(
                         swap_id = %swap.id,
                         l1_txid = %self.l1_txid_input,
                         error = %err,
                         error_debug = ?err,
-                        "Failed to fetch confirmations from RPC, using 0"
+                        "Failed to fetch transaction from RPC"
                     );
-                    0
+                    return;
                 }
             }
         } else {
             tracing::warn!(
                 swap_id = %swap.id,
-                "No RPC config available, using 0 confirmations"
+                "No RPC config available, cannot validate transaction. Using 0 confirmations."
             );
+            // Without RPC, we can't validate, but we'll allow the update
+            // (user is manually providing the txid)
             0
         };
 
