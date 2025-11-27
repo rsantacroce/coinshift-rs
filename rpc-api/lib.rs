@@ -210,6 +210,12 @@ pub trait Rpc {
         fee_sats: u64,
     ) -> RpcResult<(SwapId, Txid)>;
 
+    /// Reconstruct all swaps from the blockchain
+    /// This is useful for recovering from database corruption or verifying swap integrity
+    /// Returns the number of swaps reconstructed
+    #[method(name = "reconstruct_swaps")]
+    async fn reconstruct_swaps(&self) -> RpcResult<u32>;
+
     /// Update swap L1 transaction ID (called when L1 transaction is detected)
     #[method(name = "update_swap_l1_txid")]
     async fn update_swap_l1_txid(

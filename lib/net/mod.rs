@@ -316,6 +316,7 @@ impl Net {
             .map_err(|err| DbError::from(err).into())
     }
 
+    // TODO setup coinshift.bip300.xyz as the seed node
     pub const SEED_NODE_ADDRS: &[SocketAddr] = {
         const SIGNET_MINING_SERVER: SocketAddr = SocketAddr::new(
             std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0,0,1)),

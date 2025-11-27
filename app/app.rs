@@ -456,6 +456,25 @@ impl App {
             tracing::info!("No sidechain tip found (chain is empty)");
         }
         
+        // Perform initial wallet update to populate wallet with all existing UTXOs
+        tracing::info!("Performing initial wallet update to load all past transactions");
+        let initial_wallet_update_start = std::time::Instant::now();
+        update_wallet(node.as_ref(), &wallet).inspect_err(|err| {
+            tracing::error!("Failed to perform initial wallet update: {err:#}");
+        })?;
+        let initial_wallet_update_elapsed = initial_wallet_update_start.elapsed();
+        tracing::info!(
+            elapsed_secs = initial_wallet_update_elapsed.as_secs_f64(),
+            "Initial wallet update completed"
+        );
+        
+        // Update the utxos after initial wallet update
+        *utxos.write() = wallet.get_utxos()?;
+        tracing::debug!(
+            utxo_count = utxos.read().len(),
+            "UTXOs updated after initial wallet sync"
+        );
+        
         tracing::debug!("Wrapping miner in Arc and TokioRwLock");
         let miner = miner.map(|miner| Arc::new(TokioRwLock::new(miner)));
         tracing::info!("Spawning wallet update task");

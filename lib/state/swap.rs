@@ -96,10 +96,50 @@ pub fn validate_swap_create(
                 state.is_output_locked_to_swap(rotxn, outpoint)?
             {
                 if locked_swap_id.0 != *swap_id {
-                    return Err(Error::InvalidTransaction(format!(
-                        "Input {} is locked to swap {}",
-                        outpoint, locked_swap_id
-                    )));
+                    // Check if the locked swap exists and is valid
+                    match state.get_swap(rotxn, &locked_swap_id) {
+                        Ok(Some(_)) => {
+                            // Swap exists and is valid - this is a real lock
+                            return Err(Error::InvalidTransaction(format!(
+                                "Input {} is locked to swap {}",
+                                outpoint, locked_swap_id
+                            )));
+                        }
+                        Ok(None) => {
+                            // Swap doesn't exist - orphaned lock
+                            return Err(Error::InvalidTransaction(format!(
+                                "Input {} is locked to non-existent swap {} (orphaned lock). Please run cleanup_orphaned_locks to fix this.",
+                                outpoint, locked_swap_id
+                            )));
+                        }
+                        Err(err) => {
+                            // Check if it's a deserialization error (corrupted swap)
+                            let err_str = format!("{err:#}");
+                            let err_debug = format!("{err:?}");
+                            let is_deserialization_error = err_str.contains("Decoding")
+                                || err_str.contains("InvalidTagEncoding")
+                                || err_str.contains("deserialize")
+                                || err_str.contains("bincode")
+                                || err_str.contains("Borsh")
+                                || err_debug.contains("Decoding")
+                                || err_debug.contains("InvalidTagEncoding")
+                                || err_debug.contains("deserialize");
+
+                            if is_deserialization_error {
+                                // Swap is corrupted - orphaned lock
+                                return Err(Error::InvalidTransaction(format!(
+                                    "Input {} is locked to corrupted swap {} (orphaned lock). Please run cleanup_orphaned_locks to fix this.",
+                                    outpoint, locked_swap_id
+                                )));
+                            } else {
+                                // Other database error - return original error
+                                return Err(Error::InvalidTransaction(format!(
+                                    "Input {} is locked to swap {}, but error checking swap: {}",
+                                    outpoint, locked_swap_id, err
+                                )));
+                            }
+                        }
+                    }
                 }
             }
         }

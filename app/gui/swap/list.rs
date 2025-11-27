@@ -467,7 +467,7 @@ impl SwapList {
         None
     }
 
-    fn fetch_confirmations_from_rpc(&mut self, app: &App, swap: &Swap) {
+    fn fetch_confirmations_from_rpc(&mut self, _app: &App, swap: &Swap) {
         if self.l1_txid_input.is_empty() {
             tracing::warn!(
                 swap_id = %swap.id,
@@ -622,10 +622,15 @@ impl SwapList {
                 false
             }
             Err(err) => {
+                let err_str = format!("{err:#}");
+                let err_debug = format!("{err:?}");
                 tracing::error!(
                     swap_id = %swap.id,
                     error = %err,
-                    "Failed to check if swap exists in database"
+                    error_debug = ?err,
+                    error_display = %err_str,
+                    error_debug_str = %err_debug,
+                    "Failed to check if swap exists in database. This may indicate a database corruption issue."
                 );
                 drop(rotxn);
                 return;
