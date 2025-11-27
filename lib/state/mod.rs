@@ -606,9 +606,15 @@ impl State {
                 );
             }
             Err(e) => {
+                // Log the full error chain to help diagnose the issue
+                let err_str = format!("{e:#}");
+                let err_debug = format!("{e:?}");
                 tracing::error!(
                     swap_id = %swap.id,
                     error = %e,
+                    error_display = %err_str,
+                    error_debug = ?e,
+                    error_chain = %err_debug,
                     "Failed to read back swap after saving - serialization/deserialization mismatch. This indicates the swap was saved in an invalid format."
                 );
                 // This is a critical error - the swap was saved but can't be read back
@@ -619,8 +625,8 @@ impl State {
                 );
                 drop(self.swaps.delete(rwtxn, &swap.id));
                 return Err(Error::InvalidTransaction(format!(
-                    "Swap {} was saved but cannot be deserialized - serialization format error",
-                    swap.id
+                    "Swap {} was saved but cannot be deserialized - serialization format error: {}",
+                    swap.id, err_str
                 )));
             }
         }
@@ -888,11 +894,14 @@ impl State {
                         || err_debug.contains("deserialize");
                     
                     if is_deserialization_error {
+                        // Log the full error chain to help diagnose the issue
+                        let error_chain = format!("{:?}", err);
                         tracing::warn!(
                             swap_id = %swap_id,
                             error = %err,
                             error_debug = ?err,
                             error_display = %err_str,
+                            error_chain = %error_chain,
                             "Failed to deserialize swap from database (corrupted data), treating as non-existent"
                         );
                         Ok(None)
