@@ -37,6 +37,22 @@ use rollback::RollBack;
 
 pub const WITHDRAWAL_BUNDLE_FAILURE_GAP: u32 = 4;
 
+/// Diagnostic information about a swap entry in the database
+#[derive(Debug, Clone)]
+pub struct SwapDiagnostic {
+    pub swap_id: SwapId,
+    /// Whether the swap entry exists in the database
+    pub exists: bool,
+    /// Whether the swap data is corrupted (cannot be deserialized)
+    pub corrupted: bool,
+    /// Whether the swap can be successfully deserialized
+    pub can_deserialize: bool,
+    /// The swap data if it can be deserialized
+    pub swap: Option<Swap>,
+    /// Error message if there was an issue
+    pub error: Option<String>,
+}
+
 /// Prevalidated block data containing computed values from validation
 /// to avoid redundant computation during connection
 #[derive(Clone, Debug)]
@@ -538,10 +554,91 @@ impl State {
         rwtxn: &mut RwTxn,
         swap: &Swap,
     ) -> Result<(), Error> {
+        tracing::debug!(
+            swap_id = %swap.id,
+            state = ?swap.state,
+            "Saving swap to database"
+        );
+        
+        // Always delete any existing swap first (even if corrupted)
+        // This ensures we start with a clean slate and prevents issues with corrupted data
+        // The delete operation works on keys only, so it works even if the value is corrupted
+        match self.swaps.delete(rwtxn, &swap.id) {
+            Ok(true) => {
+                tracing::debug!(
+                    swap_id = %swap.id,
+                    "Deleted existing swap entry before saving new one"
+                );
+            }
+            Ok(false) => {
+                // Entry didn't exist, which is fine for new swaps
+                tracing::debug!(
+                    swap_id = %swap.id,
+                    "No existing swap to delete, continuing with save"
+                );
+            }
+            Err(e) => {
+                // Deletion failed for some reason, but we'll continue anyway
+                // The put() operation should overwrite anyway
+                tracing::warn!(
+                    swap_id = %swap.id,
+                    error = %e,
+                    "Failed to delete existing swap, but continuing with save (put should overwrite)"
+                );
+            }
+        }
+        
         // Save to main swaps database
         self.swaps
             .put(rwtxn, &swap.id, swap)
-            .map_err(DbError::from)?;
+            .map_err(|e| {
+                tracing::error!(
+                    swap_id = %swap.id,
+                    error = %e,
+                    "Failed to save swap to database"
+                );
+                DbError::from(e)
+            })?;
+        
+        // Verify we can read it back immediately to catch serialization issues
+        match self.swaps.try_get(rwtxn, &swap.id) {
+            Ok(Some(_)) => {
+                tracing::debug!(
+                    swap_id = %swap.id,
+                    "Successfully verified swap can be read back after saving"
+                );
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    swap_id = %swap.id,
+                    "Swap was saved but cannot be read back immediately - possible serialization issue"
+                );
+            }
+            Err(e) => {
+                // Log the full error chain to help diagnose the issue
+                let err_str = format!("{e:#}");
+                let err_debug = format!("{e:?}");
+                tracing::error!(
+                    swap_id = %swap.id,
+                    error = %e,
+                    error_display = %err_str,
+                    error_debug = ?e,
+                    error_chain = %err_debug,
+                    "Failed to read back swap after saving - serialization/deserialization mismatch. This indicates the swap was saved in an invalid format."
+                );
+                // This is a critical error - the swap was saved but can't be read back
+                // Delete it to prevent further issues
+                tracing::warn!(
+                    swap_id = %swap.id,
+                    "Deleting corrupted swap that was just saved"
+                );
+                drop(self.swaps.delete(rwtxn, &swap.id));
+                return Err(Error::InvalidTransaction(format!(
+                    "Swap {} was saved but cannot be deserialized - serialization format error: {}",
+                    swap.id, err_str
+                )));
+            }
+        }
 
         // Update swaps_by_l1_txid index
         let l1_txid_key = (swap.parent_chain, swap.l1_txid.clone());
@@ -658,14 +755,130 @@ impl State {
             // Swap not found or corrupted - log warning but still try to delete
             tracing::warn!(
                 swap_id = %swap_id,
-                "Swap not found or corrupted when deleting, attempting to delete from database anyway"
+                "Swap not found or corrupted when deleting, attempting to delete from database and unlock outputs"
             );
+            
+            // Even if swap is corrupted, unlock all outputs locked to it
+            self.unlock_all_outputs_for_swap(rwtxn, swap_id)?;
         }
 
         // Delete from main swaps database (even if swap was corrupted/unreadable)
         self.swaps.delete(rwtxn, swap_id).map_err(DbError::from)?;
 
         Ok(())
+    }
+
+    /// Unlock all outputs locked to a specific swap
+    /// This is useful when a swap is corrupted and can't be read normally
+    pub fn unlock_all_outputs_for_swap(
+        &self,
+        rwtxn: &mut RwTxn,
+        swap_id: &SwapId,
+    ) -> Result<u32, Error> {
+        let mut unlocked_count = 0;
+        let locked_outputs: Vec<(OutPointKey, SwapId)> = self
+            .locked_swap_outputs
+            .iter(rwtxn)
+            .map_err(DbError::from)?
+            .map(|(key, locked_swap_id)| Ok((key, locked_swap_id)))
+            .collect()?;
+        
+        for (outpoint_key, locked_swap_id) in locked_outputs {
+            if locked_swap_id == *swap_id {
+                let outpoint: OutPoint = outpoint_key.into();
+                self.unlock_output_from_swap(rwtxn, &outpoint)?;
+                unlocked_count += 1;
+            }
+        }
+
+        if unlocked_count > 0 {
+            tracing::info!(
+                swap_id = %swap_id,
+                unlocked_outputs = unlocked_count,
+                "Unlocked {} outputs for swap",
+                unlocked_count
+            );
+        }
+
+        Ok(unlocked_count)
+    }
+
+    /// Find and clean up orphaned locks (outputs locked to swaps that don't exist or are corrupted)
+    /// Returns the number of orphaned locks cleaned up
+    pub fn cleanup_orphaned_locks(&self, rwtxn: &mut RwTxn) -> Result<u32, Error> {
+        let mut cleaned_count = 0;
+        let locked_outputs: Vec<(OutPointKey, SwapId)> = self
+            .locked_swap_outputs
+            .iter(rwtxn)
+            .map_err(DbError::from)?
+            .map(|(key, swap_id)| Ok((key, swap_id)))
+            .collect()?;
+        
+        for (outpoint_key, swap_id) in locked_outputs {
+            // Check if swap exists and can be deserialized
+            match self.get_swap(rwtxn, &swap_id) {
+                Ok(Some(_)) => {
+                    // Swap exists and is valid, keep the lock
+                    continue;
+                }
+                Ok(None) => {
+                    // Swap doesn't exist - orphaned lock
+                    let outpoint: OutPoint = outpoint_key.into();
+                    tracing::warn!(
+                        swap_id = %swap_id,
+                        outpoint = ?outpoint,
+                        "Found orphaned lock: output locked to non-existent swap, unlocking"
+                    );
+                    self.unlock_output_from_swap(rwtxn, &outpoint)?;
+                    cleaned_count += 1;
+                }
+                Err(err) => {
+                    // Check if it's a deserialization error (corrupted swap)
+                    let err_str = format!("{err:#}");
+                    let err_debug = format!("{err:?}");
+                    let is_deserialization_error = err_str.contains("Decoding")
+                        || err_str.contains("InvalidTagEncoding")
+                        || err_str.contains("deserialize")
+                        || err_str.contains("bincode")
+                        || err_str.contains("Borsh")
+                        || err_debug.contains("Decoding")
+                        || err_debug.contains("InvalidTagEncoding")
+                        || err_debug.contains("deserialize");
+
+                    if is_deserialization_error {
+                        // Swap is corrupted - orphaned lock
+                        let outpoint: OutPoint = outpoint_key.into();
+                        tracing::warn!(
+                            swap_id = %swap_id,
+                            outpoint = ?outpoint,
+                            error = %err,
+                            "Found orphaned lock: output locked to corrupted swap, unlocking"
+                        );
+                        self.unlock_output_from_swap(rwtxn, &outpoint)?;
+                        cleaned_count += 1;
+                    } else {
+                        // Other database error - log but don't unlock (might be transient)
+                        tracing::error!(
+                            swap_id = %swap_id,
+                            error = %err,
+                            "Error checking swap for orphaned lock cleanup, skipping"
+                        );
+                    }
+                }
+            }
+        }
+
+        if cleaned_count > 0 {
+            tracing::info!(
+                cleaned_orphaned_locks = cleaned_count,
+                "Cleaned up {} orphaned locks",
+                cleaned_count
+            );
+        } else {
+            tracing::debug!("No orphaned locks found");
+        }
+
+        Ok(cleaned_count)
     }
 
     pub fn get_swap(
@@ -675,23 +888,44 @@ impl State {
     ) -> Result<Option<Swap>, Error> {
         match self.swaps.try_get(rotxn, swap_id) {
             Ok(swap) => Ok(swap),
-            Err(err) => {
-                // If deserialization fails (corrupted data), log warning and return None
-                // This allows the system to continue working even with corrupted swap entries
-                let err_str = format!("{err:#}");
-                if err_str.contains("Decoding") || err_str.contains("InvalidTagEncoding") || err_str.contains("deserialize") {
-                    tracing::warn!(
-                        swap_id = %swap_id,
-                        error = %err,
-                        error_debug = ?err,
-                        "Failed to deserialize swap from database (corrupted data), treating as non-existent"
-                    );
-                    Ok(None)
-                } else {
-                    // For other errors, propagate them
-                    Err(err.into())
+                Err(err) => {
+                    // If deserialization fails (corrupted data), log warning and return None
+                    // This allows the system to continue working even with corrupted swap entries
+                    let err_str = format!("{err:#}");
+                    let err_debug = format!("{err:?}");
+                    let is_deserialization_error = err_str.contains("Decoding") 
+                        || err_str.contains("InvalidTagEncoding") 
+                        || err_str.contains("deserialize")
+                        || err_str.contains("bincode")
+                        || err_str.contains("Borsh")
+                        || err_debug.contains("Decoding")
+                        || err_debug.contains("InvalidTagEncoding")
+                        || err_debug.contains("deserialize");
+                    
+                    if is_deserialization_error {
+                        // Log the full error chain to help diagnose the issue
+                        let error_chain = format!("{:?}", err);
+                        tracing::warn!(
+                            swap_id = %swap_id,
+                            error = %err,
+                            error_debug = ?err,
+                            error_display = %err_str,
+                            error_chain = %error_chain,
+                            "Failed to deserialize swap from database (corrupted data), treating as non-existent"
+                        );
+                        Ok(None)
+                    } else {
+                        // For other errors, log with more context and propagate them
+                        tracing::error!(
+                            swap_id = %swap_id,
+                            error = %err,
+                            error_debug = ?err,
+                            error_display = %err_str,
+                            "Database error when getting swap (not a deserialization error)"
+                        );
+                        Err(err.into())
+                    }
                 }
-            }
         }
     }
 
@@ -732,31 +966,349 @@ impl State {
     pub fn load_all_swaps(&self, rotxn: &RoTxn) -> Result<Vec<Swap>, Error> {
         let mut swaps = Vec::new();
         let mut iter = self.swaps.iter(rotxn)?;
+        let mut processed_count = 0;
+        let mut corrupted_count = 0;
+        let mut consecutive_errors = 0;
+        const MAX_CONSECUTIVE_ERRORS: u32 = 10;
+        
+        // Try to get all swap IDs first, then try to load each one individually
+        // This helps us identify which specific swaps are corrupted
+        let mut all_swap_ids = Vec::new();
         loop {
             match iter.next() {
-                Ok(Some((_swap_id, swap))) => {
-                    swaps.push(swap);
+                Ok(Some((swap_id, _swap))) => {
+                    // Successfully deserialized - add to both lists
+                    all_swap_ids.push(swap_id);
+                    swaps.push(_swap);
+                    processed_count += 1;
+                    consecutive_errors = 0;
                 }
                 Ok(None) => {
                     // End of iterator
                     break;
                 }
                 Err(err) => {
-                    // Log warning about corrupted swap
-                    // The error occurs during deserialization of a specific entry
-                    // Return the swaps we've collected so far rather than failing completely
+                    // Can't deserialize during iteration - try to get the key anyway
+                    corrupted_count += 1;
+                    consecutive_errors += 1;
+                    let err_str = format!("{err:#}");
                     tracing::warn!(
                         error = %err,
+                        error_debug = ?err,
+                        error_display = %err_str,
+                        processed_count = processed_count,
+                        corrupted_count = corrupted_count,
+                        consecutive_errors = consecutive_errors,
                         loaded_swaps = swaps.len(),
-                        "Failed to deserialize swap from database, returning {} successfully loaded swaps",
-                        swaps.len()
+                        "Failed to deserialize swap from database during iteration at position {}. Will try to identify corrupted swap by scanning all swap IDs.",
+                        processed_count
                     );
-                    // Return what we have so far - better than failing completely
-                    return Ok(swaps);
+                    
+                    // If we have too many consecutive errors, try a different approach
+                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                        tracing::warn!(
+                            total_swaps_loaded = swaps.len(),
+                            corrupted_swaps_skipped = corrupted_count,
+                            consecutive_errors = consecutive_errors,
+                            "Too many consecutive errors during swap iteration. Switching to individual swap ID lookup method."
+                        );
+                        // Break out and try loading by individual IDs
+                        break;
+                    }
+                    
+                    // Try to continue - if iterator is stuck, we'll break out above
+                    continue;
                 }
             }
         }
+        
+        // If we had errors, try to load swaps individually by getting all keys first
+        // This is slower but can help identify which swaps are corrupted
+        if corrupted_count > 0 || consecutive_errors > 0 {
+            tracing::info!(
+                "Attempting to load swaps individually to identify corrupted entries"
+            );
+            // Get all swap IDs by trying to iterate keys only
+            // Note: This might not work if the key itself is corrupted, but it's worth trying
+            let mut key_iter = self.swaps.iter(rotxn)?;
+            let mut individual_loaded = 0;
+            loop {
+                match key_iter.next() {
+                    Ok(Some((swap_id, _))) => {
+                        // Try to load this swap individually
+                        match self.get_swap(rotxn, &swap_id) {
+                            Ok(Some(swap)) => {
+                                // Only add if not already in the list
+                                if !swaps.iter().any(|s| s.id == swap_id) {
+                                    swaps.push(swap);
+                                    individual_loaded += 1;
+                                }
+                            }
+                            Ok(None) => {
+                                // Swap doesn't exist or is corrupted - already logged by get_swap
+                            }
+                            Err(e) => {
+                                tracing::debug!(
+                                    swap_id = %swap_id,
+                                    error = %e,
+                                    "Error loading individual swap"
+                                );
+                            }
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(_) => {
+                        // Can't even iterate keys - give up
+                        break;
+                    }
+                }
+            }
+            if individual_loaded > 0 {
+                tracing::info!(
+                    individually_loaded = individual_loaded,
+                    "Loaded {individual_loaded} additional swaps using individual lookup"
+                );
+            }
+        }
+        
+        if corrupted_count > 0 {
+            tracing::warn!(
+                total_swaps_loaded = swaps.len(),
+                corrupted_swaps_skipped = corrupted_count,
+                "Completed loading swaps: {} loaded, {} corrupted swaps skipped",
+                swaps.len(),
+                corrupted_count
+            );
+        }
+        
         Ok(swaps)
+    }
+
+    /// Check if a specific swap is corrupted (cannot be deserialized)
+    /// Returns Ok(true) if corrupted, Ok(false) if valid, Err if there's a database error
+    pub fn check_swap_corrupted(
+        &self,
+        rotxn: &RoTxn,
+        swap_id: &SwapId,
+    ) -> Result<bool, Error> {
+        match self.swaps.try_get(rotxn, swap_id) {
+            Ok(Some(_)) => Ok(false), // Swap exists and can be deserialized
+            Ok(None) => Ok(false),    // Swap doesn't exist (not corrupted, just missing)
+            Err(err) => {
+                // Check if it's a deserialization error
+                let err_str = format!("{err:#}");
+                let err_debug = format!("{err:?}");
+                let is_deserialization_error = err_str.contains("Decoding")
+                    || err_str.contains("InvalidTagEncoding")
+                    || err_str.contains("deserialize")
+                    || err_str.contains("bincode")
+                    || err_str.contains("Borsh")
+                    || err_debug.contains("Decoding")
+                    || err_debug.contains("InvalidTagEncoding")
+                    || err_debug.contains("deserialize");
+
+                if is_deserialization_error {
+                    Ok(true) // Swap exists but is corrupted
+                } else {
+                    // Other database error
+                    Err(err.into())
+                }
+            }
+        }
+    }
+
+    /// Delete all corrupted swaps from the database
+    /// This is useful for cleaning up corrupted data that prevents normal operation
+    /// Returns the number of corrupted swaps deleted
+    pub fn cleanup_corrupted_swaps(&self, rwtxn: &mut RwTxn) -> Result<u32, Error> {
+        // First, find all corrupted swaps using a read transaction
+        // We need to do this in two steps because we can't mutate while iterating
+        let corrupted_swaps = {
+            // Create a read-only transaction for finding corrupted swaps
+            let rotxn = rwtxn as &RoTxn;
+            self.find_corrupted_swaps(rotxn)?
+        };
+        
+        let mut deleted_count = 0;
+        for swap_id in &corrupted_swaps {
+            tracing::warn!(
+                swap_id = %swap_id,
+                "Deleting corrupted swap"
+            );
+            // Delete directly from database (bypassing get_swap which would fail)
+            drop(self.swaps.delete(rwtxn, swap_id));
+            deleted_count += 1;
+        }
+        
+        if deleted_count > 0 {
+            tracing::info!(
+                deleted_count = deleted_count,
+                "Cleaned up {} corrupted swaps from database",
+                deleted_count
+            );
+        }
+        
+        Ok(deleted_count)
+    }
+
+    /// Find all corrupted swaps by attempting to load each swap individually
+    /// This is more thorough than load_all_swaps but slower
+    /// Returns a list of swap_ids that are corrupted
+    pub fn find_corrupted_swaps(&self, rotxn: &RoTxn) -> Result<Vec<SwapId>, Error> {
+        let mut corrupted_swaps = Vec::new();
+        let mut iter = self.swaps.iter(rotxn)?;
+        let mut total_checked = 0;
+        let mut total_valid = 0;
+
+        loop {
+            match iter.next() {
+                Ok(Some((_swap_id, _swap))) => {
+                    total_checked += 1;
+                    total_valid += 1;
+                    // Swap loaded successfully, not corrupted
+                }
+                Ok(None) => {
+                    // End of iterator
+                    break;
+                }
+                Err(err) => {
+                    // This is tricky - we can't get the swap_id from the error
+                    // But we can try to identify it by attempting to load swaps individually
+                    // For now, we'll log the error and try to continue
+                    total_checked += 1;
+                    let err_str = format!("{err:#}");
+                    tracing::warn!(
+                        error = %err,
+                        error_debug = ?err,
+                        error_display = %err_str,
+                        total_checked = total_checked,
+                        "Encountered error during iteration, will attempt to identify corrupted swap"
+                    );
+                    // We can't identify the swap_id from the iterator error
+                    // The caller should use find_corrupted_swaps_by_scanning for a more thorough check
+                }
+            }
+        }
+
+        // Now try a different approach: iterate through all swaps and try to load each one
+        // This is slower but can identify which specific swaps are corrupted
+        tracing::info!(
+            total_checked = total_checked,
+            total_valid = total_valid,
+            "Completed initial scan. Starting detailed scan to identify corrupted swaps..."
+        );
+
+        // Re-iterate and try to get each swap individually
+        let mut detailed_iter = self.swaps.iter(rotxn)?;
+        loop {
+            match detailed_iter.next() {
+                Ok(Some((swap_id, _))) => {
+                    // Try to get the swap again to see if it's corrupted
+                    match self.check_swap_corrupted(rotxn, &swap_id) {
+                        Ok(true) => {
+                            tracing::warn!(
+                                swap_id = %swap_id,
+                                "Found corrupted swap"
+                            );
+                            corrupted_swaps.push(swap_id);
+                        }
+                        Ok(false) => {
+                            // Valid swap
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                swap_id = %swap_id,
+                                error = %e,
+                                "Error checking if swap is corrupted"
+                            );
+                        }
+                    }
+                }
+                Ok(None) => break,
+                Err(err) => {
+                    // Can't get swap_id from iterator error, skip
+                    let err_str = format!("{err:#}");
+                    tracing::warn!(
+                        error = %err,
+                        error_display = %err_str,
+                        "Skipping entry that cannot be iterated"
+                    );
+                    // Try to continue - if iterator is broken, we'll hit this repeatedly
+                    // and eventually break out
+                    continue;
+                }
+            }
+        }
+
+        if !corrupted_swaps.is_empty() {
+            tracing::warn!(
+                corrupted_count = corrupted_swaps.len(),
+                corrupted_swap_ids = ?corrupted_swaps.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                "Found {} corrupted swaps in database",
+                corrupted_swaps.len()
+            );
+        } else {
+            tracing::info!("No corrupted swaps found in database");
+        }
+
+        Ok(corrupted_swaps)
+    }
+
+    /// Get diagnostic information about a swap entry
+    /// Returns information about whether the swap exists, is corrupted, or has other issues
+    pub fn diagnose_swap(
+        &self,
+        rotxn: &RoTxn,
+        swap_id: &SwapId,
+    ) -> Result<SwapDiagnostic, Error> {
+        // Check if swap exists in database (even if corrupted)
+        let exists_in_db = self.swaps.try_get(rotxn, swap_id);
+        
+        match exists_in_db {
+            Ok(Some(swap)) => {
+                // Swap exists and can be deserialized
+                Ok(SwapDiagnostic {
+                    swap_id: *swap_id,
+                    exists: true,
+                    corrupted: false,
+                    can_deserialize: true,
+                    swap: Some(swap),
+                    error: None,
+                })
+            }
+            Ok(None) => {
+                // Swap doesn't exist
+                Ok(SwapDiagnostic {
+                    swap_id: *swap_id,
+                    exists: false,
+                    corrupted: false,
+                    can_deserialize: false,
+                    swap: None,
+                    error: None,
+                })
+            }
+            Err(err) => {
+                let err_str = format!("{err:#}");
+                let err_debug = format!("{err:?}");
+                let is_deserialization_error = err_str.contains("Decoding")
+                    || err_str.contains("InvalidTagEncoding")
+                    || err_str.contains("deserialize")
+                    || err_str.contains("bincode")
+                    || err_str.contains("Borsh")
+                    || err_debug.contains("Decoding")
+                    || err_debug.contains("InvalidTagEncoding")
+                    || err_debug.contains("deserialize");
+
+                Ok(SwapDiagnostic {
+                    swap_id: *swap_id,
+                    exists: true, // Entry exists but can't be deserialized
+                    corrupted: is_deserialization_error,
+                    can_deserialize: false,
+                    swap: None,
+                    error: Some(format!("{}", err)),
+                })
+            }
+        }
     }
 
     // Output locking methods
@@ -862,6 +1414,184 @@ impl State {
         block::connect(self, rwtxn, header, body)
     }
 
+    /// Reconstruct all swaps from the blockchain by scanning all blocks
+    /// This is useful for:
+    /// - Recovering from database corruption
+    /// - Verifying swap database integrity
+    /// - Syncing swap history for new nodes
+    /// 
+    /// This function scans all blocks from genesis to tip and reconstructs
+    /// all swaps from SwapCreate and SwapClaim transactions.
+    pub fn reconstruct_swaps_from_blockchain(
+        &self,
+        rwtxn: &mut RwTxn,
+        archive: &crate::archive::Archive,
+        tip_hash: Option<BlockHash>,
+    ) -> Result<u32, Error> {
+        
+        tracing::info!("Starting swap reconstruction from blockchain");
+        
+        // Get the tip hash
+        let tip = tip_hash.or_else(|| self.try_get_tip(rwtxn).ok()?);
+        let Some(tip) = tip else {
+            tracing::warn!("No tip found, nothing to reconstruct");
+            return Ok(0);
+        };
+        
+        // Get tip height
+        let tip_height = archive.get_height(rwtxn, tip)
+            .map_err(|e| Error::InvalidTransaction(format!("Failed to get tip height: {}", e)))?;
+        tracing::info!(
+            tip_hash = %tip,
+            tip_height = tip_height,
+            "Reconstructing swaps from genesis to tip"
+        );
+        
+        // Clear existing swaps database (we'll rebuild from blockchain)
+        // But keep indexes - we'll rebuild them too
+        tracing::info!("Collecting all block hashes from genesis to tip");
+        
+        // First, collect all block hashes from genesis to tip
+        let mut block_hashes = Vec::new();
+        let mut current_hash = Some(tip);
+        while let Some(block_hash) = current_hash {
+            block_hashes.push(block_hash);
+            let header = archive.get_header(rwtxn, block_hash)
+                .map_err(|e| Error::InvalidTransaction(format!("Failed to get header: {}", e)))?;
+            current_hash = header.prev_side_hash;
+        }
+        
+        // Reverse to process from genesis to tip
+        block_hashes.reverse();
+        
+        tracing::info!(
+            total_blocks = block_hashes.len(),
+            "Processing {} blocks to reconstruct swaps",
+            block_hashes.len()
+        );
+        
+        let mut swap_count = 0;
+        
+        // Iterate forwards from genesis to tip
+        for (height, block_hash) in block_hashes.iter().enumerate() {
+            let height = height as u32;
+            
+            // Get block header and body
+            let _header = archive.get_header(rwtxn, *block_hash)
+                .map_err(|e| Error::InvalidTransaction(format!("Failed to get header: {}", e)))?;
+            let body = archive.get_body(rwtxn, *block_hash)
+                .map_err(|e| Error::InvalidTransaction(format!("Failed to get body: {}", e)))?;
+            
+            // Process transactions in reverse order (to handle claims before creates)
+            // Actually, we should process in forward order to match how blocks were connected
+            for transaction in &body.transactions {
+                let txid = transaction.txid();
+                
+                // Fill transaction to get spent UTXOs (needed for swap reconstruction)
+                let filled = self.fill_transaction(rwtxn, transaction)?;
+                
+                match &transaction.data {
+                    TxData::SwapCreate {
+                        swap_id,
+                        parent_chain,
+                        l1_txid_bytes,
+                        required_confirmations,
+                        l2_recipient,
+                        l2_amount,
+                        l1_recipient_address,
+                        l1_amount,
+                    } => {
+                        let swap_id = SwapId(*swap_id);
+                        
+                        // Reconstruct L1 txid
+                        let l1_txid = SwapTxId::from_bytes(l1_txid_bytes);
+                        
+                        // Reconstruct swap object
+                        let swap = Swap::new(
+                            swap_id,
+                            crate::types::SwapDirection::L2ToL1,
+                            *parent_chain,
+                            l1_txid,
+                            Some(*required_confirmations),
+                            *l2_recipient,
+                            bitcoin::Amount::from_sat(*l2_amount),
+                            l1_recipient_address.clone(),
+                            l1_amount.map(bitcoin::Amount::from_sat),
+                            height,
+                            None, // TODO: Add expiration support
+                        );
+                        
+                        // Lock outputs for L2 → L1 swaps
+                        if l1_recipient_address.is_some() {
+                            for (vout, _) in filled.transaction.outputs.iter().enumerate() {
+                                let outpoint = OutPoint::Regular {
+                                    txid,
+                                    vout: vout as u32,
+                                };
+                                // Only lock if not already locked (to handle reorgs)
+                                if self.is_output_locked_to_swap(rwtxn, &outpoint)?.is_none() {
+                                    self.lock_output_to_swap(rwtxn, &outpoint, &swap_id)?;
+                                }
+                            }
+                        }
+                        
+                        // Save swap (will overwrite if exists)
+                        self.save_swap(rwtxn, &swap)?;
+                        swap_count += 1;
+                        
+                        if swap_count % 100 == 0 {
+                            tracing::debug!(
+                                reconstructed_swaps = swap_count,
+                                current_height = height,
+                                "Reconstructing swaps..."
+                            );
+                        }
+                    }
+                    TxData::SwapClaim { swap_id, .. } => {
+                        let swap_id = SwapId(*swap_id);
+                        
+                        // Get swap and update its state
+                        if let Some(mut swap) = self.get_swap(rwtxn, &swap_id)? {
+                            // Unlock outputs
+                            for (outpoint, _) in &filled.transaction.inputs {
+                                if self.is_output_locked_to_swap(rwtxn, outpoint)? == Some(swap_id) {
+                                    self.unlock_output_from_swap(rwtxn, outpoint)?;
+                                }
+                            }
+                            
+                            // Mark swap as completed
+                            swap.mark_completed();
+                            self.save_swap(rwtxn, &swap)?;
+                        } else {
+                            tracing::warn!(
+                                swap_id = %swap_id,
+                                block_height = height,
+                                "SwapClaim found but swap not found in database (may have been created in a later block)"
+                            );
+                        }
+                    }
+                    TxData::Regular => {}
+                }
+            }
+            
+            if height % 1000 == 0 && height > 0 {
+                tracing::info!(
+                    processed_blocks = height,
+                    total_blocks = block_hashes.len(),
+                    reconstructed_swaps = swap_count,
+                    "Reconstruction progress"
+                );
+            }
+        }
+        
+        tracing::info!(
+            reconstructed_swaps = swap_count,
+            "Completed swap reconstruction from blockchain"
+        );
+        
+        Ok(swap_count)
+    }
+
     /// Prevalidate a block under a read transaction, computing values reused on connect.
     pub fn prevalidate_block(
         &self,
@@ -932,3 +1662,4 @@ impl Watchable<()> for State {
         tokio_stream::wrappers::WatchStream::new(self.tip.watch().clone())
     }
 }
+

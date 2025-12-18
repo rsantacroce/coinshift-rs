@@ -322,6 +322,27 @@ impl RpcServer for RpcServerImpl {
         Ok((swap_id, txid))
     }
 
+    async fn reconstruct_swaps(&self) -> RpcResult<u32> {
+        let mut rwtxn = self
+            .app
+            .node
+            .env()
+            .write_txn()
+            .map_err(custom_err)?;
+        let count = self
+            .app
+            .node
+            .state()
+            .reconstruct_swaps_from_blockchain(
+                &mut rwtxn,
+                self.app.node.archive(),
+                None, // Use current tip
+            )
+            .map_err(custom_err)?;
+        rwtxn.commit().map_err(custom_err)?;
+        Ok(count)
+    }
+
     async fn update_swap_l1_txid(
         &self,
         swap_id: SwapId,

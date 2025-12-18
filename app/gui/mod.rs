@@ -103,6 +103,9 @@ impl BottomPanel {
     /// MUST be run from within a tokio runtime
     fn new(app: Option<App>) -> Self {
         let initialized = app.map(BottomPanelInitialized::new);
+        if initialized.is_some() {
+            tracing::info!("Initializing balance loading");
+        }
         Self {
             initialized,
             balance: None,
@@ -117,8 +120,16 @@ impl BottomPanel {
         let rt_guard = initialized.app.runtime.enter();
         match initialized.wallet_updated.poll_next() {
             Some(Poll::Ready(())) => {
+                tracing::debug!("Wallet update detected, loading balance");
                 self.balance = match initialized.app.wallet.get_balance() {
-                    Ok(balance) => Some(Some(balance.total)),
+                    Ok(balance) => {
+                        tracing::info!(
+                            balance_sats = balance.total.to_sat(),
+                            available_sats = balance.available.to_sat(),
+                            "Balance loaded successfully"
+                        );
+                        Some(Some(balance.total))
+                    }
                     Err(err) => {
                         let err = anyhow::Error::from(err);
                         tracing::error!("Failed to update balance: {err:#}");
@@ -126,7 +137,16 @@ impl BottomPanel {
                     }
                 }
             }
-            Some(Poll::Pending) | None => (),
+            Some(Poll::Pending) => {
+                if self.balance.is_none() {
+                    tracing::trace!("Waiting for wallet update to load balance");
+                }
+            }
+            None => {
+                if self.balance.is_none() {
+                    tracing::warn!("Wallet update stream ended before balance could be loaded");
+                }
+            }
         }
         drop(rt_guard)
     }
@@ -151,6 +171,8 @@ impl BottomPanel {
             }
             None => {
                 ui.monospace_selectable_singleline(false, "Loading balance");
+                // Log periodically when still loading (but not on every frame)
+                // This is handled in update() method
             }
         }
     }

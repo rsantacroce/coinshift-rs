@@ -59,6 +59,8 @@ pub enum Command {
     ListPeers,
     /// List all UTXOs
     ListUtxos,
+    /// Reconstruct all swaps from the blockchain
+    ReconstructSwaps,
     /// Attempt to mine a sidechain block
     Mine {
         #[arg(long)]
@@ -197,6 +199,10 @@ where
         Command::ListUtxos => {
             let utxos = rpc_client.list_utxos().await?;
             serde_json::to_string_pretty(&utxos)?
+        }
+        Command::ReconstructSwaps => {
+            let count = rpc_client.reconstruct_swaps().await?;
+            format!("Reconstructed {} swaps from blockchain", count)
         }
         Command::Mine { fee_sats } => {
             let () = rpc_client.mine(fee_sats).await?;

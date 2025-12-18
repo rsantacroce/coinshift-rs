@@ -110,6 +110,7 @@ pub struct Node<MainchainTransport = Channel> {
     net: Net,
     net_task: NetTaskHandle,
     state: State,
+    #[allow(dead_code)]
     wallet: Option<Arc<crate::wallet::Wallet>>,
 }
 
@@ -184,8 +185,11 @@ where
         let state = State::new(&env)?;
         tracing::debug!("Node::new: State created");
         tracing::debug!("Node::new: Creating Archive");
-        let archive = Archive::new(&env)?;
-        tracing::debug!("Node::new: Archive created");
+        let archive = Archive::new(&env).map_err(|e| {
+            tracing::error!(error = %e, "Node::new: Failed to create Archive");
+            e
+        })?;
+        tracing::info!("Node::new: Archive created successfully");
         tracing::debug!("Node::new: Creating MemPool");
         let mempool = MemPool::new(&env)?;
         tracing::debug!("Node::new: MemPool created");
@@ -218,6 +222,47 @@ where
         tracing::info!("Node::new: NetTaskHandle created");
         let cusf_mainchain_wallet =
             cusf_mainchain_wallet.map(|wallet| Arc::new(Mutex::new(wallet)));
+        // Check for corrupted swaps and automatically reconstruct if needed
+        {
+            tracing::info!("Node::new: Checking for corrupted swaps");
+            let rotxn = env.read_txn().map_err(EnvError::from)?;
+            let corrupted_swaps: Vec<crate::types::SwapId> = state.find_corrupted_swaps(&rotxn)
+                .map_err(|e| {
+                    tracing::warn!(error = %e, "Failed to check for corrupted swaps, continuing");
+                    Vec::<crate::types::SwapId>::new()
+                })
+                .unwrap_or_default();
+            drop(rotxn);
+            
+            if !corrupted_swaps.is_empty() {
+                tracing::warn!(
+                    corrupted_count = corrupted_swaps.len(),
+                    "Found {} corrupted swaps, automatically reconstructing from blockchain",
+                    corrupted_swaps.len()
+                );
+                
+                let mut rwtxn = env.write_txn().map_err(EnvError::from)?;
+                match state.reconstruct_swaps_from_blockchain(&mut rwtxn, &archive, None) {
+                    Ok(reconstructed_count) => {
+                        rwtxn.commit().map_err(RwTxnError::from)?;
+                        tracing::info!(
+                            reconstructed_swaps = reconstructed_count,
+                            "Successfully reconstructed swaps from blockchain"
+                        );
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            error = %err,
+                            "Failed to reconstruct swaps from blockchain, node will continue but swaps may be missing"
+                        );
+                        // Don't fail node startup, just log the error
+                    }
+                }
+            } else {
+                tracing::debug!("No corrupted swaps detected");
+            }
+        }
+        
         tracing::info!("Node::new: Initialization complete, returning Node instance");
         Ok(Self {
             archive,
@@ -271,10 +316,51 @@ where
         transaction: AuthorizedTransaction,
     ) -> Result<(), Error> {
         {
-            let mut rotxn = self.env.write_txn().map_err(EnvError::from)?;
-            self.state.validate_transaction(&rotxn, &transaction)?;
-            self.mempool.put(&mut rotxn, &transaction)?;
-            rotxn.commit().map_err(RwTxnError::from)?;
+            let mut rwtxn = self.env.write_txn().map_err(EnvError::from)?;
+            
+            // Try to validate the transaction
+            match self.state.validate_transaction(&rwtxn, &transaction) {
+                Ok(_) => {
+                    // Validation succeeded, add to mempool
+                    self.mempool.put(&mut rwtxn, &transaction)?;
+                    rwtxn.commit().map_err(RwTxnError::from)?;
+                }
+                Err(err) => {
+                    // Check if it's an orphaned lock error
+                    let err_str = format!("{err:#}");
+                    if err_str.contains("orphaned lock") || err_str.contains("corrupted swap") {
+                        tracing::warn!(
+                            error = %err,
+                            "Detected orphaned lock error, attempting to clean up"
+                        );
+                        
+                        // Clean up orphaned locks
+                        let cleaned = self.state.cleanup_orphaned_locks(&mut rwtxn)
+                            .map_err(|e| Error::State(Box::new(e)))?;
+                        if cleaned > 0 {
+                            tracing::info!(
+                                cleaned_orphaned_locks = cleaned,
+                                "Cleaned up {} orphaned locks, retrying transaction",
+                                cleaned
+                            );
+                            rwtxn.commit().map_err(RwTxnError::from)?;
+                            
+                            // Retry validation after cleanup
+                            let mut retry_rwtxn = self.env.write_txn().map_err(EnvError::from)?;
+                            self.state.validate_transaction(&retry_rwtxn, &transaction)
+                                .map_err(|e| Error::State(Box::new(e)))?;
+                            self.mempool.put(&mut retry_rwtxn, &transaction)?;
+                            retry_rwtxn.commit().map_err(RwTxnError::from)?;
+                        } else {
+                            // No locks cleaned, return original error
+                            return Err(err.into());
+                        }
+                    } else {
+                        // Not an orphaned lock error, return as-is
+                        return Err(err.into());
+                    }
+                }
+            }
         }
         self.net.push_tx(Default::default(), transaction);
         Ok(())

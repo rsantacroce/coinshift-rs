@@ -268,6 +268,30 @@ pub fn connect_prevalidated(
                 // Reconstruct L1 txid
                 let l1_txid = SwapTxId::from_bytes(l1_txid_bytes);
 
+                // Check if swap already exists (might be from mempool or previous block)
+                // If it exists but is corrupted, delete it first to avoid issues
+                match state.get_swap(rwtxn, &swap_id) {
+                    Ok(Some(ref existing)) => {
+                        tracing::warn!(
+                            swap_id = %swap_id,
+                            existing_state = ?existing.state,
+                            "Swap already exists in database, will overwrite during block connection"
+                        );
+                    }
+                    Ok(None) => {
+                        // Swap doesn't exist, that's fine
+                    }
+                    Err(_) => {
+                        // Swap exists but is corrupted - delete it first
+                        tracing::warn!(
+                            swap_id = %swap_id,
+                            "Existing swap is corrupted, deleting before saving new one"
+                        );
+                        // Try to delete the corrupted swap
+                        drop(state.swaps.delete(rwtxn, &swap_id));
+                    }
+                }
+
                 // Reconstruct swap object
                 let swap = Swap::new(
                     swap_id,
@@ -290,6 +314,15 @@ pub fn connect_prevalidated(
                     )));
                 }
 
+                tracing::debug!(
+                    swap_id = %swap_id,
+                    l2_recipient = ?swap.l2_recipient,
+                    l2_amount = %swap.l2_amount,
+                    l1_amount = ?swap.l1_amount,
+                    state = ?swap.state,
+                    "Reconstructed swap from SwapCreate transaction, about to save"
+                );
+
                 // Lock outputs for L2 → L1 swaps
                 if l1_recipient_address.is_some() {
                     for (vout, _) in filled.transaction.outputs.iter().enumerate() {
@@ -303,8 +336,16 @@ pub fn connect_prevalidated(
                     }
                 }
 
-                // Save swap
+                // Save swap - this is where corruption might happen
+                tracing::debug!(
+                    swap_id = %swap_id,
+                    "About to save swap during block connection"
+                );
                 state.save_swap(rwtxn, &swap)?;
+                tracing::debug!(
+                    swap_id = %swap_id,
+                    "Swap saved during block connection"
+                );
             }
             TxData::SwapClaim { swap_id, l2_claimer_address, .. } => {
                 let swap_id = SwapId(*swap_id);

@@ -143,10 +143,15 @@ impl Archive {
     pub const NUM_DBS: u32 = 14;
 
     pub fn new(env: &sneed::Env) -> Result<Self, Error> {
+        tracing::debug!("Archive::new: Acquiring write transaction");
         let mut rwtxn = env.write_txn().map_err(EnvError::from)?;
+        tracing::debug!("Archive::new: Write transaction acquired");
+        tracing::debug!("Archive::new: Creating archive_version database");
         let version =
             DatabaseUnique::create(env, &mut rwtxn, "archive_version")
                 .map_err(EnvError::from)?;
+        tracing::debug!("Archive::new: archive_version database created");
+        tracing::debug!("Archive::new: Checking database version");
         match version.try_get(&rwtxn, &()).map_err(DbError::from)? {
             Some(db_version)
                 if db_version
@@ -159,50 +164,94 @@ impl Archive {
                 // Merkle root structure changed in 0.13.0
                 // `deposits` and `main_bmm_commitments` were removed in
                 // 0.12.0, and `main_block_infos` was added
+                let db_path = env.path().to_path_buf();
+                let required_version = Version {
+                    major: 0,
+                    minor: 13,
+                    patch: 0,
+                };
+                tracing::error!(
+                    db_version = ?db_version,
+                    required_version = ?required_version,
+                    db_path = %db_path.display(),
+                    "Archive::new: Incompatible database version. Database version {} is older than required version {}. Please clear the database at {} and re-sync.",
+                    db_version,
+                    required_version,
+                    db_path.display()
+                );
                 return Err(Error::IncompatibleVersion {
                     version: db_version,
-                    db_path: env.path().to_path_buf(),
+                    db_path,
                 });
             }
-            Some(_) => (),
-            None => version
-                .put(&mut rwtxn, &(), &*VERSION)
-                .map_err(DbError::from)?,
+            Some(_) => {
+                tracing::debug!("Archive::new: Database version check passed");
+            }
+            None => {
+                tracing::debug!("Archive::new: Setting initial database version");
+                version
+                    .put(&mut rwtxn, &(), &*VERSION)
+                    .map_err(DbError::from)?;
+                tracing::debug!("Archive::new: Initial database version set");
+            }
         }
+        tracing::debug!("Archive::new: Creating accumulators database");
         let accumulators =
             DatabaseUnique::create(env, &mut rwtxn, "accumulators")
                 .map_err(EnvError::from)?;
+        tracing::debug!("Archive::new: accumulators database created");
+        tracing::debug!("Archive::new: Creating hash_to_height database");
         let block_hash_to_height =
             DatabaseUnique::create(env, &mut rwtxn, "hash_to_height")
                 .map_err(EnvError::from)?;
+        tracing::debug!("Archive::new: hash_to_height database created");
+        tracing::debug!("Archive::new: Creating bmm_results database");
         let bmm_results =
             DatabaseUnique::create(env, &mut rwtxn, "bmm_results")
                 .map_err(EnvError::from)?;
+        tracing::debug!("Archive::new: bmm_results database created");
+        tracing::debug!("Archive::new: Creating bodies database");
         let bodies = DatabaseUnique::create(env, &mut rwtxn, "bodies")
             .map_err(EnvError::from)?;
+        tracing::debug!("Archive::new: bodies database created");
+        tracing::debug!("Archive::new: Creating exponential_ancestors database");
         let exponential_ancestors =
             DatabaseUnique::create(env, &mut rwtxn, "exponential_ancestors")
                 .map_err(EnvError::from)?;
+        tracing::debug!("Archive::new: exponential_ancestors database created");
+        tracing::debug!("Archive::new: Creating exponential_main_ancestors database");
         let exponential_main_ancestors = DatabaseUnique::create(
             env,
             &mut rwtxn,
             "exponential_main_ancestors",
         )
         .map_err(EnvError::from)?;
+        tracing::debug!("Archive::new: exponential_main_ancestors database created");
+        tracing::debug!("Archive::new: Creating headers database");
         let headers = DatabaseUnique::create(env, &mut rwtxn, "headers")
             .map_err(EnvError::from)?;
+        tracing::debug!("Archive::new: headers database created");
+        tracing::debug!("Archive::new: Creating main_hash_to_height database");
         let main_block_hash_to_height =
             DatabaseUnique::create(env, &mut rwtxn, "main_hash_to_height")
                 .map_err(EnvError::from)?;
+        tracing::debug!("Archive::new: main_hash_to_height database created");
+        tracing::debug!("Archive::new: Creating main_block_infos database");
         let main_block_infos =
             DatabaseUnique::create(env, &mut rwtxn, "main_block_infos")
                 .map_err(EnvError::from)?;
+        tracing::debug!("Archive::new: main_block_infos database created");
+        tracing::debug!("Archive::new: Creating main_header_infos database");
         let main_header_infos =
             DatabaseUnique::create(env, &mut rwtxn, "main_header_infos")
                 .map_err(EnvError::from)?;
+        tracing::debug!("Archive::new: main_header_infos database created");
+        tracing::debug!("Archive::new: Creating main_successors database");
         let main_successors =
             DatabaseUnique::create(env, &mut rwtxn, "main_successors")
                 .map_err(EnvError::from)?;
+        tracing::debug!("Archive::new: main_successors database created");
+        tracing::debug!("Archive::new: Initializing main_successors with zero hash");
         if main_successors
             .try_get(&rwtxn, &bitcoin::BlockHash::all_zeros())
             .map_err(DbError::from)?
@@ -216,8 +265,12 @@ impl Archive {
                 )
                 .map_err(DbError::from)?;
         }
+        tracing::debug!("Archive::new: main_successors initialized");
+        tracing::debug!("Archive::new: Creating successors database");
         let successors = DatabaseUnique::create(env, &mut rwtxn, "successors")
             .map_err(EnvError::from)?;
+        tracing::debug!("Archive::new: successors database created");
+        tracing::debug!("Archive::new: Initializing successors with None key");
         if successors
             .try_get(&rwtxn, &None)
             .map_err(DbError::from)?
@@ -227,9 +280,14 @@ impl Archive {
                 .put(&mut rwtxn, &None, &HashSet::new())
                 .map_err(DbError::from)?;
         }
+        tracing::debug!("Archive::new: successors initialized");
+        tracing::debug!("Archive::new: Creating total_work database");
         let total_work = DatabaseUnique::create(env, &mut rwtxn, "total_work")
             .map_err(EnvError::from)?;
+        tracing::debug!("Archive::new: total_work database created");
+        tracing::debug!("Archive::new: Committing transaction");
         rwtxn.commit().map_err(RwTxnError::from)?;
+        tracing::debug!("Archive::new: Transaction committed successfully");
         Ok(Self {
             accumulators,
             block_hash_to_height,

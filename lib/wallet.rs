@@ -354,16 +354,12 @@ impl Wallet {
         let proof = accumulator.prove(&input_utxo_hashes)?;
 
         // 4. Create outputs with SwapPending content
-        // For open swaps, we still need an output address - use a placeholder or sender's address
-        let output_address = l2_recipient.unwrap_or_else(|| {
-            // For open swaps, use sender's address as placeholder
-            // The actual recipient will be determined when claiming
-            l2_sender_address
-        });
-        
+        // Swap output is owned by the swap creator (similar to withdrawal outputs)
+        // The l2_recipient is just metadata about who can claim it, but the output
+        // itself is owned by the creator
         let outputs = vec![
             Output {
-                address: output_address,
+                address: l2_sender_address,
                 content: OutputContent::SwapPending {
                     value: l2_amount,
                     swap_id: swap_id.0,
