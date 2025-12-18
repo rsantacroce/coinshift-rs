@@ -572,14 +572,35 @@ async fn fill_swap_test_task(
     tracing::info!("  Swap ID: {}", swap_id);
     tracing::info!("  Coinshift TXID (L2): {:?}", swap_txid);
     
-    // Wait for the transaction to be fully processed
-    sleep(std::time::Duration::from_secs(2)).await;
+    // Wait longer for the swap transaction to be fully processed and the node to be ready
+    // Swap transactions may need more time to be processed than regular transactions
+    // Also need to ensure mainchain sync is complete before attempting to mine
+    tracing::debug!("Waiting for swap transaction to be fully processed and mainchain sync...");
+    
+    // Wait and check mainchain sync status multiple times
+    let mut mainchain_ready = false;
+    for attempt in 1..=10 {
+        sleep(std::time::Duration::from_secs(1)).await;
+        let best_main_hash = coinshift.rpc_client.get_best_mainchain_block_hash().await?;
+        if best_main_hash.is_some() {
+            tracing::debug!("Mainchain appears synced (attempt {}/10)", attempt);
+            mainchain_ready = true;
+            break;
+        }
+        tracing::debug!("Waiting for mainchain sync (attempt {}/10)...", attempt);
+    }
+    if !mainchain_ready {
+        tracing::warn!("Mainchain sync check incomplete, but proceeding with BMM");
+    }
+    
+    // Additional wait to ensure transaction is in mempool and node is ready
+    sleep(std::time::Duration::from_secs(3)).await;
     
     // Debug: Check state before BMM
     let block_count_before = coinshift.rpc_client.getblockcount().await?;
     tracing::debug!("Block count before BMM: {}", block_count_before);
     
-    // Check swap status before BMM
+    // Check swap status before BMM (may be None if not yet in a block)
     let swap_status_before = coinshift.rpc_client.get_swap_status(swap_id).await?;
     tracing::debug!("Swap status before BMM: {:?}", swap_status_before.as_ref().map(|s| &s.state));
     
@@ -598,12 +619,9 @@ async fn fill_swap_test_task(
     tracing::debug!("Balance before BMM: total={} sats, available={} sats", 
         balance_before.total.to_sat(), balance_before.available.to_sat());
     
-    // Try calling mine() directly first to see if it works
-    tracing::debug!("Testing direct mine() call before BMM");
-    match coinshift.rpc_client.mine(None).await {
-        Ok(_) => tracing::debug!("Direct mine() call succeeded"),
-        Err(e) => tracing::warn!("Direct mine() call failed: {:#}", e),
-    }
+    // Final mainchain sync check
+    let best_main_hash = coinshift.rpc_client.get_best_mainchain_block_hash().await?;
+    tracing::debug!("Best mainchain block hash before BMM: {:?}", best_main_hash);
     
     // Mine a block to confirm the swap transaction
     tracing::info!("BMMing block to confirm swap transaction");
@@ -614,8 +632,9 @@ async fn fill_swap_test_task(
     if let Err(ref err) = bmm_result {
         tracing::error!("First BMM attempt failed with error: {:#}", err);
         tracing::error!("Error source chain: {:?}", err.source());
-        tracing::warn!("First BMM attempt failed, waiting longer and retrying...");
-        sleep(std::time::Duration::from_secs(3)).await;
+        tracing::warn!("First BMM attempt failed (likely mainchain task timeout), waiting longer for mainchain task to process and retrying...");
+        // Wait longer to give mainchain task time to process any pending requests
+        sleep(std::time::Duration::from_secs(10)).await;
         
         // Debug: Check state again before retry
         let block_count_retry = coinshift.rpc_client.getblockcount().await?;
@@ -628,8 +647,9 @@ async fn fill_swap_test_task(
         if let Err(ref err) = bmm_result {
             tracing::error!("Second BMM attempt failed with error: {:#}", err);
             tracing::error!("Error source chain: {:?}", err.source());
-            tracing::warn!("Second BMM attempt also failed, waiting even longer and retrying once more...");
-            sleep(std::time::Duration::from_secs(3)).await;
+            tracing::warn!("Second BMM attempt also failed, waiting even longer for mainchain task to process and retrying once more...");
+            // Wait even longer on second retry
+            sleep(std::time::Duration::from_secs(10)).await;
             
             // Debug: Check state again before final retry
             let block_count_final = coinshift.rpc_client.getblockcount().await?;

@@ -6,6 +6,17 @@ license-file.workspace = true
 publish.workspace = true
 version.workspace = true
 
+[dependencies]
+coinshift = { path = "../lib" }
+bitcoin = { workspace = true }
+bincode = { workspace = true }
+heed = "0.21.0"
+hex = "0.4.3"
+serde = { workspace = true, features = ["derive"] }
+sneed = { version = "0.0.11", features = ["observe"] }
+tempfile = "3.8.0"
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
 [dev-dependencies]
 anyhow = { workspace = true }
 bip300301_enforcer_lib = { workspace = true }
@@ -27,6 +38,7 @@ tracing = { workspace = true }
 tracing-indicatif = "0.3.8"
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+bincode = { workspace = true }
 
 [features]
 default = ["rustls"]
@@ -43,3 +55,27 @@ path = "main.rs"
 harness = false
 test = false
 crate-type = ["bin"]
+
+[[bin]]
+name = "test_swap_serialization"
+path = "test_swap_serialization.rs"
+
+[[bin]]
+name = "test_swap_minimal"
+path = "test_swap_minimal.rs"
+
+[[bin]]
+name = "test_swap_field_by_field"
+path = "test_swap_field_by_field.rs"
+
+[[bin]]
+name = "test_swap_l1_amount"
+path = "test_swap_l1_amount.rs"
+
+[[bin]]
+name = "test_swap_invalid_tag_encoding"
+path = "test_swap_invalid_tag_encoding.rs"
+
+[[bin]]
+name = "test_swap_database"
+path = "test_swap_database.rs"

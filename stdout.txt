@@ -1,0 +1,336 @@
+2025-12-18T16:54:54.916609Z  INFO coinshift_app::app: app/app.rs:344: Instantiating wallet with data directory: /tmp/t58c08-0/coinshift-fill-swap-test
+2025-12-18T16:54:54.917312Z  INFO coinshift_app::app: app/app.rs:355: Connecting to mainchain at http://127.0.0.1:8006/
+2025-12-18T16:54:54.917819Z DEBUG hyper_util::client::legacy::connect::http: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.11/src/client/legacy/connect/http.rs:769: connecting to 127.0.0.1:8006
+2025-12-18T16:54:54.918444Z DEBUG hyper_util::client::legacy::connect::http: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-util-0.1.11/src/client/legacy/connect/http.rs:772: connected to 127.0.0.1:8006
+2025-12-18T16:54:54.918554Z DEBUG h2::client: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/h2-0.4.9/src/client.rs:1290: binding client connection
+2025-12-18T16:54:54.918617Z DEBUG h2::client: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/h2-0.4.9/src/client.rs:1295: client connection bound
+2025-12-18T16:54:54.919813Z DEBUG Connection{peer=Client}: h2::proto::settings: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/h2-0.4.9/src/proto/settings.rs:56: received settings ACK; applying Settings { flags: (0x0), enable_push: 0, initial_window_size: 2097152, max_frame_size: 16384, max_header_list_size: 16384 }
+2025-12-18T16:54:54.921273Z  INFO coinshift_app::app: app/app.rs:322: Verified existence of cusf.mainchain.v1.ValidatorService
+2025-12-18T16:54:54.922296Z  INFO coinshift_app::app: app/app.rs:329: Checked existence of cusf.mainchain.v1.WalletService: true
+2025-12-18T16:54:54.922459Z  INFO coinshift_app::app: app/app.rs:396: Instantiating node struct
+2025-12-18T16:54:54.922505Z  INFO coinshift::node: lib/node/mod.rs:138: Node::new: Starting initialization
+2025-12-18T16:54:54.922535Z DEBUG coinshift::node: lib/node/mod.rs:140: Node::new: Setting up database path env_path=/tmp/t58c08-0/coinshift-fill-swap-test/data.mdb
+2025-12-18T16:54:54.922576Z DEBUG coinshift::node: lib/node/mod.rs:143: Node::new: Database directory created/verified
+2025-12-18T16:54:54.922591Z DEBUG coinshift::node: lib/node/mod.rs:177: Node::new: Opening database environment
+2025-12-18T16:54:54.922687Z  INFO coinshift::node: lib/node/mod.rs:180: Node::new: Database environment opened successfully
+2025-12-18T16:54:54.922702Z DEBUG coinshift::node: lib/node/mod.rs:183: Node::new: Creating State
+2025-12-18T16:54:54.922804Z DEBUG coinshift::node: lib/node/mod.rs:185: Node::new: State created
+2025-12-18T16:54:54.922818Z DEBUG coinshift::node: lib/node/mod.rs:186: Node::new: Creating Archive
+2025-12-18T16:54:54.922855Z DEBUG coinshift::archive: lib/archive.rs:146: Archive::new: Acquiring write transaction
+2025-12-18T16:54:54.922881Z DEBUG coinshift::archive: lib/archive.rs:148: Archive::new: Write transaction acquired
+2025-12-18T16:54:54.922892Z DEBUG coinshift::archive: lib/archive.rs:149: Archive::new: Creating archive_version database
+2025-12-18T16:54:54.922917Z DEBUG coinshift::archive: lib/archive.rs:153: Archive::new: archive_version database created
+2025-12-18T16:54:54.922929Z DEBUG coinshift::archive: lib/archive.rs:154: Archive::new: Checking database version
+2025-12-18T16:54:54.922940Z DEBUG coinshift::archive: lib/archive.rs:191: Archive::new: Setting initial database version
+2025-12-18T16:54:54.922958Z DEBUG coinshift::archive: lib/archive.rs:195: Archive::new: Initial database version set
+2025-12-18T16:54:54.922970Z DEBUG coinshift::archive: lib/archive.rs:198: Archive::new: Creating accumulators database
+2025-12-18T16:54:54.922985Z DEBUG coinshift::archive: lib/archive.rs:202: Archive::new: accumulators database created
+2025-12-18T16:54:54.922996Z DEBUG coinshift::archive: lib/archive.rs:203: Archive::new: Creating hash_to_height database
+2025-12-18T16:54:54.923012Z DEBUG coinshift::archive: lib/archive.rs:207: Archive::new: hash_to_height database created
+2025-12-18T16:54:54.923022Z DEBUG coinshift::archive: lib/archive.rs:208: Archive::new: Creating bmm_results database
+2025-12-18T16:54:54.923045Z DEBUG coinshift::archive: lib/archive.rs:212: Archive::new: bmm_results database created
+2025-12-18T16:54:54.923056Z DEBUG coinshift::archive: lib/archive.rs:213: Archive::new: Creating bodies database
+2025-12-18T16:54:54.923069Z DEBUG coinshift::archive: lib/archive.rs:216: Archive::new: bodies database created
+2025-12-18T16:54:54.923080Z DEBUG coinshift::archive: lib/archive.rs:217: Archive::new: Creating exponential_ancestors database
+2025-12-18T16:54:54.923095Z DEBUG coinshift::archive: lib/archive.rs:221: Archive::new: exponential_ancestors database created
+2025-12-18T16:54:54.923106Z DEBUG coinshift::archive: lib/archive.rs:222: Archive::new: Creating exponential_main_ancestors database
+2025-12-18T16:54:54.923121Z DEBUG coinshift::archive: lib/archive.rs:229: Archive::new: exponential_main_ancestors database created
+2025-12-18T16:54:54.923133Z DEBUG coinshift::archive: lib/archive.rs:230: Archive::new: Creating headers database
+2025-12-18T16:54:54.923149Z DEBUG coinshift::archive: lib/archive.rs:233: Archive::new: headers database created
+2025-12-18T16:54:54.923159Z DEBUG coinshift::archive: lib/archive.rs:234: Archive::new: Creating main_hash_to_height database
+2025-12-18T16:54:54.923175Z DEBUG coinshift::archive: lib/archive.rs:238: Archive::new: main_hash_to_height database created
+2025-12-18T16:54:54.923191Z DEBUG coinshift::archive: lib/archive.rs:239: Archive::new: Creating main_block_infos database
+2025-12-18T16:54:54.923211Z DEBUG coinshift::archive: lib/archive.rs:243: Archive::new: main_block_infos database created
+2025-12-18T16:54:54.923221Z DEBUG coinshift::archive: lib/archive.rs:244: Archive::new: Creating main_header_infos database
+2025-12-18T16:54:54.923236Z DEBUG coinshift::archive: lib/archive.rs:248: Archive::new: main_header_infos database created
+2025-12-18T16:54:54.923247Z DEBUG coinshift::archive: lib/archive.rs:249: Archive::new: Creating main_successors database
+2025-12-18T16:54:54.923260Z DEBUG coinshift::archive: lib/archive.rs:253: Archive::new: main_successors database created
+2025-12-18T16:54:54.923270Z DEBUG coinshift::archive: lib/archive.rs:254: Archive::new: Initializing main_successors with zero hash
+2025-12-18T16:54:54.923302Z DEBUG coinshift::archive: lib/archive.rs:268: Archive::new: main_successors initialized
+2025-12-18T16:54:54.923313Z DEBUG coinshift::archive: lib/archive.rs:269: Archive::new: Creating successors database
+2025-12-18T16:54:54.923352Z DEBUG coinshift::archive: lib/archive.rs:272: Archive::new: successors database created
+2025-12-18T16:54:54.923363Z DEBUG coinshift::archive: lib/archive.rs:273: Archive::new: Initializing successors with None key
+2025-12-18T16:54:54.923392Z DEBUG coinshift::archive: lib/archive.rs:283: Archive::new: successors initialized
+2025-12-18T16:54:54.923403Z DEBUG coinshift::archive: lib/archive.rs:284: Archive::new: Creating total_work database
+2025-12-18T16:54:54.923419Z DEBUG coinshift::archive: lib/archive.rs:287: Archive::new: total_work database created
+2025-12-18T16:54:54.923429Z DEBUG coinshift::archive: lib/archive.rs:288: Archive::new: Committing transaction
+2025-12-18T16:54:54.923452Z DEBUG coinshift::archive: lib/archive.rs:290: Archive::new: Transaction committed successfully
+2025-12-18T16:54:54.923465Z  INFO coinshift::node: lib/node/mod.rs:191: Node::new: Archive created successfully
+2025-12-18T16:54:54.923479Z DEBUG coinshift::node: lib/node/mod.rs:192: Node::new: Creating MemPool
+2025-12-18T16:54:54.923513Z DEBUG coinshift::node: lib/node/mod.rs:194: Node::new: MemPool created
+2025-12-18T16:54:54.923523Z  INFO coinshift::node: lib/node/mod.rs:195: Node::new: Creating MainchainTaskHandle
+2025-12-18T16:54:54.923586Z  INFO coinshift::node: lib/node/mod.rs:202: Node::new: MainchainTaskHandle created
+2025-12-18T16:54:54.923599Z  INFO coinshift::node: lib/node/mod.rs:203: Node::new: Creating Net bind_addr=127.0.0.1:8009
+2025-12-18T16:54:54.923622Z DEBUG coinshift::net: lib/net/mod.rs:340: Net::new: Starting initialization bind_addr=127.0.0.1:8009
+2025-12-18T16:54:54.923634Z DEBUG coinshift::net: lib/net/mod.rs:341: Net::new: Creating server endpoint
+2025-12-18T16:54:54.924275Z  INFO coinshift::net: lib/net/mod.rs:143: creating server endpoint: binding to 127.0.0.1:8009
+2025-12-18T16:54:54.925642Z DEBUG coinshift::net: lib/net/mod.rs:343: Net::new: Server endpoint created
+2025-12-18T16:54:54.925659Z DEBUG coinshift::net: lib/net/mod.rs:345: Net::new: Opening database transaction
+2025-12-18T16:54:54.925670Z DEBUG coinshift::net: lib/net/mod.rs:347: Net::new: Opening/creating known_peers database
+2025-12-18T16:54:54.925683Z DEBUG coinshift::net: lib/net/mod.rs:355: Net::new: Creating new known_peers database
+2025-12-18T16:54:54.925708Z DEBUG coinshift::net: lib/net/mod.rs:359: Net::new: Adding seed node seed_node=172.105.148.135:4255
+2025-12-18T16:54:54.925734Z DEBUG coinshift::net: lib/net/mod.rs:359: Net::new: Adding seed node seed_node=95.217.243.12:4255
+2025-12-18T16:54:54.925749Z DEBUG coinshift::net: lib/net/mod.rs:365: Net::new: Creating net_version database
+2025-12-18T16:54:54.925767Z DEBUG coinshift::net: lib/net/mod.rs:370: Net::new: Committing database transaction
+2025-12-18T16:54:54.925786Z DEBUG coinshift::net: lib/net/mod.rs:372: Net::new: Creating peer info channel
+2025-12-18T16:54:54.925798Z DEBUG coinshift::net: lib/net/mod.rs:384: Net::new: Reading known peers from database
+2025-12-18T16:54:54.925857Z  INFO coinshift::net: lib/net/mod.rs:396: Net::new: Connecting to known peers peer_count=2
+2025-12-18T16:54:54.925875Z DEBUG coinshift::net: lib/net/mod.rs:399: Net::new: Attempting to connect to known peer peer_addr=95.217.243.12:4255
+2025-12-18T16:54:54.926870Z  INFO connect_peer:drive{id=0}: quinn_udp::imp: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/quinn-udp-0.5.11/src/unix.rs:348: `libc::sendmsg` failed with Invalid argument (os error 22); halting segmentation offload
+2025-12-18T16:54:54.926921Z  WARN connect_peer:drive{id=0}: quinn_udp: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/quinn-udp-0.5.11/src/lib.rs:167: sendmsg error: Os { code: 22, kind: InvalidInput, message: "Invalid argument" }, Transmit: { destination: 95.217.243.12:4255, src_ip: None, ecn: Some(Ect0), len: 1200, segment_size: None }
+2025-12-18T16:54:54.927441Z TRACE connect_peer: coinshift::net: lib/net/mod.rs:290: connect peer: spawning info rx
+2025-12-18T16:54:54.927480Z TRACE connect_peer: coinshift::net: lib/net/mod.rs:302: connect peer: adding to active peers
+2025-12-18T16:54:54.927494Z TRACE coinshift::net::peer: lib/net/peer/mod.rs:170: connecting to peer addr=95.217.243.12:4255
+2025-12-18T16:54:54.927498Z TRACE connect_peer: coinshift::net: lib/net/mod.rs:207: add active peer: starting addr=95.217.243.12:4255
+2025-12-18T16:54:54.927533Z DEBUG coinshift::net: lib/net/mod.rs:405: Net::new: Successfully initiated connection to peer peer_addr=95.217.243.12:4255
+2025-12-18T16:54:54.927545Z DEBUG coinshift::net: lib/net/mod.rs:399: Net::new: Attempting to connect to known peer peer_addr=172.105.148.135:4255
+2025-12-18T16:54:54.928032Z TRACE connect_peer: coinshift::net: lib/net/mod.rs:290: connect peer: spawning info rx
+2025-12-18T16:54:54.928052Z TRACE connect_peer: coinshift::net: lib/net/mod.rs:302: connect peer: adding to active peers
+2025-12-18T16:54:54.928066Z TRACE connect_peer: coinshift::net: lib/net/mod.rs:207: add active peer: starting addr=172.105.148.135:4255
+2025-12-18T16:54:54.928085Z DEBUG coinshift::net: lib/net/mod.rs:405: Net::new: Successfully initiated connection to peer peer_addr=172.105.148.135:4255
+2025-12-18T16:54:54.928097Z TRACE coinshift::net::peer: lib/net/peer/mod.rs:170: connecting to peer addr=172.105.148.135:4255
+2025-12-18T16:54:54.928100Z  INFO coinshift::net: lib/net/mod.rs:441: Net::new: Finished connecting to known peers elapsed_secs=0.002230542
+2025-12-18T16:54:54.928114Z  INFO coinshift::net: lib/net/mod.rs:445: Net::new: Initialization complete
+2025-12-18T16:54:54.928125Z  INFO coinshift::node: lib/node/mod.rs:206: Node::new: Net created
+2025-12-18T16:54:54.928133Z  INFO coinshift::node: lib/node/mod.rs:207: Node::new: Creating NetTaskHandle
+2025-12-18T16:54:54.928177Z  INFO coinshift::node: lib/node/mod.rs:221: Node::new: NetTaskHandle created
+2025-12-18T16:54:54.928189Z  INFO coinshift::node: lib/node/mod.rs:226: Node::new: Checking for corrupted swaps
+2025-12-18T16:54:54.928199Z DEBUG coinshift::node::net_task: lib/node/net_task.rs:857: starting net task
+2025-12-18T16:54:54.928210Z  INFO coinshift::state: lib/state/mod.rs:1195: Completed initial scan. Starting detailed scan to identify corrupted swaps... total_checked=0 total_valid=0
+2025-12-18T16:54:54.928227Z  INFO coinshift::state: lib/state/mod.rs:1251: No corrupted swaps found in database
+2025-12-18T16:54:54.928238Z DEBUG coinshift::node: lib/node/mod.rs:261: No corrupted swaps detected
+2025-12-18T16:54:54.928248Z  INFO coinshift::node: lib/node/mod.rs:265: Node::new: Initialization complete, returning Node instance
+2025-12-18T16:54:54.928260Z DEBUG coinshift::net: lib/net/mod.rs:455: accept incoming: listening for connections on `127.0.0.1:8009`
+2025-12-18T16:54:54.928263Z  INFO coinshift_app::app: app/app.rs:408: Node instantiated successfully elapsed_secs=0.005786333
+2025-12-18T16:54:54.928273Z DEBUG coinshift_app::app: app/app.rs:413: Initializing UTXOs
+2025-12-18T16:54:54.928281Z DEBUG coinshift_app::app: app/app.rs:416: Getting wallet UTXOs
+2025-12-18T16:54:54.928302Z DEBUG coinshift_app::app: app/app.rs:418: Got wallet UTXOs utxo_count=0
+2025-12-18T16:54:54.928312Z DEBUG coinshift_app::app: app/app.rs:419: Getting all transactions from mempool
+2025-12-18T16:54:54.928352Z DEBUG coinshift_app::app: app/app.rs:421: Got all transactions from mempool transaction_count=0
+2025-12-18T16:54:54.928364Z DEBUG coinshift_app::app: app/app.rs:430: UTXOs initialized after removing spent outputs final_utxo_count=0
+2025-12-18T16:54:54.928375Z  INFO coinshift_app::app: app/app.rs:437: UTXOs initialized elapsed_secs=9.4542e-5
+2025-12-18T16:54:54.928386Z DEBUG coinshift_app::app: app/app.rs:441: Wrapping node in Arc
+2025-12-18T16:54:54.928394Z DEBUG coinshift_app::app: app/app.rs:443: Node wrapped in Arc
+2025-12-18T16:54:54.928402Z DEBUG coinshift_app::app: app/app.rs:446: Checking initial sidechain state
+2025-12-18T16:54:54.928416Z  INFO coinshift_app::app: app/app.rs:456: No sidechain tip found (chain is empty)
+2025-12-18T16:54:54.928424Z  INFO coinshift_app::app: app/app.rs:460: Performing initial wallet update to load all past transactions
+2025-12-18T16:54:54.928436Z TRACE coinshift_app::app: app/app.rs:60: starting wallet update
+2025-12-18T16:54:54.928483Z DEBUG coinshift_app::app: app/app.rs:72: finished wallet update
+2025-12-18T16:54:54.928494Z  INFO coinshift_app::app: app/app.rs:466: Initial wallet update completed elapsed_secs=5.7708e-5
+2025-12-18T16:54:54.928506Z DEBUG coinshift_app::app: app/app.rs:473: UTXOs updated after initial wallet sync utxo_count=0
+2025-12-18T16:54:54.928517Z DEBUG coinshift_app::app: app/app.rs:478: Wrapping miner in Arc and TokioRwLock
+2025-12-18T16:54:54.928527Z  INFO coinshift_app::app: app/app.rs:480: Spawning wallet update task
+2025-12-18T16:54:54.928558Z  INFO coinshift_app::app: app/app.rs:483: Wallet update task spawned
+2025-12-18T16:54:54.928569Z  INFO coinshift_app::app: app/app.rs:486: Spawning L1 sync task for deposit scanning
+2025-12-18T16:54:54.928587Z  INFO coinshift_app::app: app/app.rs:488: L1 sync task spawned
+2025-12-18T16:54:54.928595Z DEBUG coinshift_app::app: app/app.rs:490: Dropping runtime guard
+2025-12-18T16:54:54.928603Z  INFO coinshift_app::app: app/app.rs:492: App initialization complete
+2025-12-18T16:54:54.928613Z TRACE coinshift_app::app: app/app.rs:82: Updating wallet
+2025-12-18T16:54:54.928626Z TRACE coinshift_app::app: app/app.rs:60: starting wallet update
+2025-12-18T16:54:54.928635Z  INFO coinshift_app: app/main.rs:233: Running in headless mode
+2025-12-18T16:54:54.928660Z DEBUG coinshift_app::app: app/app.rs:72: finished wallet update
+2025-12-18T16:54:54.928671Z TRACE coinshift_app::app: app/app.rs:85: Updated wallet
+2025-12-18T16:54:54.928692Z  INFO coinshift_app::app: app/app.rs:131: L1 sync task started, will check every 10 seconds
+2025-12-18T16:54:54.928716Z  INFO coinshift_app: app/main.rs:217: starting RPC server at `127.0.0.1:8010`
+2025-12-18T16:54:55.912061Z DEBUG request{method=POST uri=/ request_id="req_9429e3e89fd84cafb7332b4d0feab466"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:54:55.914374Z  INFO request{method=POST uri=/ request_id="req_9429e3e89fd84cafb7332b4d0feab466"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=2 ms status=200
+2025-12-18T16:54:55.915849Z DEBUG request{method=POST uri=/ request_id="req_516cffcbf261437d800e0220f221f827"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:54:55.951415Z  INFO request{method=POST uri=/ request_id="req_516cffcbf261437d800e0220f221f827"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=35 ms status=200
+2025-12-18T16:54:55.952891Z DEBUG request{method=POST uri=/ request_id="req_db714aeeb45e4b3e960817590dd38bd3"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:54:55.953894Z  INFO request{method=POST uri=/ request_id="req_db714aeeb45e4b3e960817590dd38bd3"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=1 ms status=200
+2025-12-18T16:54:57.096894Z DEBUG request{method=POST uri=/ request_id="req_5e7de3ae70a044c1bffb2f580c8d09eb"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:54:57.097056Z  INFO request{method=POST uri=/ request_id="req_5e7de3ae70a044c1bffb2f580c8d09eb"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=0 ms status=200
+2025-12-18T16:54:57.097620Z DEBUG request{method=POST uri=/ request_id="req_c1c6ca20691f4235a47d3e4735be251e"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:54:57.109720Z  INFO coinshift::miner: lib/miner.rs:62: attempt BMM: created TX: d6e3e8a10469d0b972699cad19912b0e9e90f37614c5688ae953c8b9f6a0ee74
+2025-12-18T16:54:57.109747Z DEBUG coinshift_app::app: app/app.rs:770: mine: confirming BMM... bmm_txid=d6e3e8a10469d0b972699cad19912b0e9e90f37614c5688ae953c8b9f6a0ee74
+2025-12-18T16:54:57.109767Z DEBUG coinshift::miner: lib/miner.rs:78: confirm BMM: verifying... block_hash=4fbc8481fc3ff72a2a9ded63aea97bc907a9c54372cee892c7a7ea8c5884d727
+2025-12-18T16:54:58.978629Z DEBUG coinshift::miner: lib/miner.rs:91: confirm BMM: verified! side_hash=4fbc8481fc3ff72a2a9ded63aea97bc907a9c54372cee892c7a7ea8c5884d727 main_height=111 main_hash=0000012677803c026e56f68ca468f8f460ae73997cda76c6ef8eaa9bb6fad4e1 bmm_commitment=4fbc8481fc3ff72a2a9ded63aea97bc907a9c54372cee892c7a7ea8c5884d727
+2025-12-18T16:54:58.979139Z DEBUG coinshift_app::app: app/app.rs:776: mine: confirmed BMM, submitting block main_hash=0000012677803c026e56f68ca468f8f460ae73997cda76c6ef8eaa9bb6fad4e1 side_hash=4fbc8481fc3ff72a2a9ded63aea97bc907a9c54372cee892c7a7ea8c5884d727
+2025-12-18T16:54:58.979213Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:109: request_ancestor_infos: Starting to request ancestor headers/info block_hash=0000012677803c026e56f68ca468f8f460ae73997cda76c6ef8eaa9bb6fad4e1
+2025-12-18T16:54:58.979232Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:138: request_ancestor_infos: Requesting first batch from tip block_hash=0000012677803c026e56f68ca468f8f460ae73997cda76c6ef8eaa9bb6fad4e1 batch=1
+2025-12-18T16:54:58.983781Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:159: request_ancestor_infos: Received batch, processing next block_hash=0000012677803c026e56f68ca468f8f460ae73997cda76c6ef8eaa9bb6fad4e1 batch=1 batch_size=112 total_blocks=112 batch_elapsed_secs=0.004541666 next_height=None
+2025-12-18T16:54:58.983803Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:169: request_ancestor_infos: Reached genesis block block_hash=0000012677803c026e56f68ca468f8f460ae73997cda76c6ef8eaa9bb6fad4e1
+2025-12-18T16:54:58.983813Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:187: request_ancestor_infos: Finished fetching, reversing and storing block_hash=0000012677803c026e56f68ca468f8f460ae73997cda76c6ef8eaa9bb6fad4e1 total_blocks=112 batches=1 fetch_elapsed_secs=0.004620625
+2025-12-18T16:54:58.983826Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:197: request_ancestor_infos: Starting to store ancestor headers/info to archive block_hash=0000012677803c026e56f68ca468f8f460ae73997cda76c6ef8eaa9bb6fad4e1
+2025-12-18T16:54:58.986533Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:224: request_ancestor_infos: Successfully stored all ancestor headers/info block_hash=0000012677803c026e56f68ca468f8f460ae73997cda76c6ef8eaa9bb6fad4e1 blocks_stored=112 store_elapsed_secs=0.0027015 total_elapsed_secs=0.007335041
+2025-12-18T16:54:58.986596Z TRACE coinshift::node: lib/node/mod.rs:699: Storing header: 4fbc8481fc3ff72a2a9ded63aea97bc907a9c54372cee892c7a7ea8c5884d727
+2025-12-18T16:54:58.986678Z TRACE coinshift::archive: lib/archive.rs:855: Verified BMM @ 0000012677803c026e56f68ca468f8f460ae73997cda76c6ef8eaa9bb6fad4e1: no parent block_hash=4fbc8481fc3ff72a2a9ded63aea97bc907a9c54372cee892c7a7ea8c5884d727
+2025-12-18T16:54:58.986711Z TRACE coinshift::node: lib/node/mod.rs:705: Stored header: 4fbc8481fc3ff72a2a9ded63aea97bc907a9c54372cee892c7a7ea8c5884d727
+2025-12-18T16:54:58.986755Z DEBUG coinshift::node::net_task: lib/node/net_task.rs:1245: sending new tip ready confirm new_tip=Tip { block_hash: 4fbc8481fc3ff72a2a9ded63aea97bc907a9c54372cee892c7a7ea8c5884d727, main_block_hash: 0000012677803c026e56f68ca468f8f460ae73997cda76c6ef8eaa9bb6fad4e1 }
+2025-12-18T16:54:58.986832Z TRACE coinshift::node::net_task: lib/node/net_task.rs:958: received new mailbox item mailbox_item=NewTipReady(Tip { block_hash: 4fbc8481fc3ff72a2a9ded63aea97bc907a9c54372cee892c7a7ea8c5884d727, main_block_hash: 0000012677803c026e56f68ca468f8f460ae73997cda76c6ef8eaa9bb6fad4e1 }, None, Some(Sender { complete: false }))
+2025-12-18T16:54:58.987364Z TRACE coinshift::types: lib/types/mod.rs:428: Applying diff leaves=0 roots=[] insertions=[] deletions=[]
+2025-12-18T16:54:58.987375Z DEBUG coinshift::types: lib/types/mod.rs:439: Applied diff leaves=0 roots=[]
+2025-12-18T16:54:58.987395Z TRACE coinshift::types: lib/types/mod.rs:428: Applying diff leaves=0 roots=[] insertions=[] deletions=[]
+2025-12-18T16:54:58.987403Z DEBUG coinshift::types: lib/types/mod.rs:439: Applied diff leaves=0 roots=[]
+2025-12-18T16:54:58.987413Z DEBUG coinshift::node::net_task: lib/node/net_task.rs:106: connected body height=None merkle_root=ad609aab58365210a611957240b55acd776b2a8a2ff45ddd1799af22246b1f1d block_hash=4fbc8481fc3ff72a2a9ded63aea97bc907a9c54372cee892c7a7ea8c5884d727
+2025-12-18T16:54:58.987428Z TRACE coinshift::state::two_way_peg_data: lib/state/two_way_peg_data.rs:805: Connecting 2WPD... block_height=0
+2025-12-18T16:54:58.987447Z  INFO coinshift::state::two_way_peg_data: lib/state/two_way_peg_data.rs:519: Deposit from parent chain received block_height=0 event_block_hash=000000580d7c3193d3ccfa2321f4f8fe9335f743ecefaff4806d0ed58ef8b39f outpoint=deposit b583cde3103a2a83727a3df52d6fbd0d7f930a5498fe1291775f0cee7017086f 0 address=ZzEH43XwtGsZxeQStUFTrVttGcB amount_btc=0.1 amount_sats=10000000
+2025-12-18T16:54:58.987492Z DEBUG coinshift::state::two_way_peg_data: lib/state/two_way_peg_data.rs:659: Starting to scan enforcer for coinshift transactions block_height=0
+2025-12-18T16:54:58.987502Z DEBUG coinshift::state::two_way_peg_data: lib/state/two_way_peg_data.rs:664: Loaded swaps from state, scanning enforcer for matching transactions block_height=0 swap_count=0
+2025-12-18T16:54:58.987510Z DEBUG coinshift::state::two_way_peg_data: lib/state/two_way_peg_data.rs:785: Finished scanning enforcer for coinshift transactions block_height=0 total_swaps=0 pending_swaps=0 expired_swaps=0 scanned_swaps=0
+2025-12-18T16:54:58.987524Z TRACE coinshift::types: lib/types/mod.rs:428: Applying diff leaves=0 roots=[] insertions=[35228664c745e8df4df53a37ec27a629b3fa065139e83c5b3ea4333b6150cca9] deletions=[]
+2025-12-18T16:54:58.987542Z DEBUG coinshift::types: lib/types/mod.rs:439: Applied diff leaves=1 roots=[35228664c745e8df4df53a37ec27a629b3fa065139e83c5b3ea4333b6150cca9]
+2025-12-18T16:54:58.987599Z TRACE coinshift::archive: lib/archive.rs:855: Verified BMM @ 0000012677803c026e56f68ca468f8f460ae73997cda76c6ef8eaa9bb6fad4e1: no parent block_hash=4fbc8481fc3ff72a2a9ded63aea97bc907a9c54372cee892c7a7ea8c5884d727
+2025-12-18T16:54:58.987657Z  INFO coinshift::node::net_task: lib/node/net_task.rs:431: synced to tip: 4fbc8481fc3ff72a2a9ded63aea97bc907a9c54372cee892c7a7ea8c5884d727
+2025-12-18T16:54:58.987676Z  INFO coinshift::node::net_task: lib/node/net_task.rs:437: synced to tip: 4fbc8481fc3ff72a2a9ded63aea97bc907a9c54372cee892c7a7ea8c5884d727
+2025-12-18T16:54:58.987683Z TRACE coinshift_app::app: app/app.rs:82: Updating wallet
+2025-12-18T16:54:58.987691Z TRACE coinshift_app::app: app/app.rs:60: starting wallet update
+2025-12-18T16:54:58.987735Z DEBUG coinshift_app::app: app/app.rs:72: finished wallet update
+2025-12-18T16:54:58.987747Z TRACE coinshift_app::app: app/app.rs:85: Updated wallet
+2025-12-18T16:54:58.987776Z DEBUG coinshift_app::app: app/app.rs:787: mine: BMM accepted as new tip main_hash=0000012677803c026e56f68ca468f8f460ae73997cda76c6ef8eaa9bb6fad4e1
+2025-12-18T16:54:58.987788Z TRACE coinshift_app::app: app/app.rs:82: Updating wallet
+2025-12-18T16:54:58.987791Z TRACE coinshift_app::app: app/app.rs:60: starting wallet update
+2025-12-18T16:54:58.987819Z DEBUG coinshift_app::app: app/app.rs:72: finished wallet update
+2025-12-18T16:54:58.987827Z TRACE coinshift_app::app: app/app.rs:85: Updated wallet
+2025-12-18T16:54:58.987943Z  INFO request{method=POST uri=/ request_id="req_c1c6ca20691f4235a47d3e4735be251e"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=1890 ms status=200
+2025-12-18T16:54:58.988398Z DEBUG request{method=POST uri=/ request_id="req_0424009b22fd4fe6a5943a98b2a43c30"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:54:58.988500Z  INFO request{method=POST uri=/ request_id="req_0424009b22fd4fe6a5943a98b2a43c30"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=0 ms status=200
+2025-12-18T16:54:58.988865Z DEBUG request{method=POST uri=/ request_id="req_39b9f7df6b7f44f4928e14ceacf1275b"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:54:58.998821Z  INFO coinshift::miner: lib/miner.rs:62: attempt BMM: created TX: 2aa87955493ec8744e1946b298b3b38b3cc90db6b916032b6b78db8fc07f449e
+2025-12-18T16:54:58.998849Z DEBUG coinshift_app::app: app/app.rs:770: mine: confirming BMM... bmm_txid=2aa87955493ec8744e1946b298b3b38b3cc90db6b916032b6b78db8fc07f449e
+2025-12-18T16:54:58.998867Z DEBUG coinshift::miner: lib/miner.rs:78: confirm BMM: verifying... block_hash=f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b
+2025-12-18T16:55:00.669471Z DEBUG coinshift::miner: lib/miner.rs:91: confirm BMM: verified! side_hash=f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b main_height=112 main_hash=00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1 bmm_commitment=f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b
+2025-12-18T16:55:00.669649Z DEBUG coinshift_app::app: app/app.rs:776: mine: confirmed BMM, submitting block main_hash=00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1 side_hash=f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b
+2025-12-18T16:55:00.669738Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:109: request_ancestor_infos: Starting to request ancestor headers/info block_hash=00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1
+2025-12-18T16:55:00.669750Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:138: request_ancestor_infos: Requesting first batch from tip block_hash=00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1 batch=1
+2025-12-18T16:55:00.674285Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:159: request_ancestor_infos: Received batch, processing next block_hash=00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1 batch=1 batch_size=113 total_blocks=113 batch_elapsed_secs=0.004526208 next_height=None
+2025-12-18T16:55:00.674309Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:169: request_ancestor_infos: Reached genesis block block_hash=00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1
+2025-12-18T16:55:00.674319Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:187: request_ancestor_infos: Finished fetching, reversing and storing block_hash=00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1 total_blocks=113 batches=1 fetch_elapsed_secs=0.004589542
+2025-12-18T16:55:00.674347Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:197: request_ancestor_infos: Starting to store ancestor headers/info to archive block_hash=00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1
+2025-12-18T16:55:00.676997Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:224: request_ancestor_infos: Successfully stored all ancestor headers/info block_hash=00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1 blocks_stored=113 store_elapsed_secs=0.002648625 total_elapsed_secs=0.007265542
+2025-12-18T16:55:00.677056Z TRACE coinshift::node: lib/node/mod.rs:699: Storing header: f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b
+2025-12-18T16:55:00.677137Z TRACE coinshift::archive: lib/archive.rs:875: Verified BMM @ 00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1: verified parent block_hash=f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b
+2025-12-18T16:55:00.677164Z TRACE coinshift::node: lib/node/mod.rs:705: Stored header: f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b
+2025-12-18T16:55:00.677224Z DEBUG coinshift::node::net_task: lib/node/net_task.rs:1245: sending new tip ready confirm new_tip=Tip { block_hash: f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b, main_block_hash: 00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1 }
+2025-12-18T16:55:00.677292Z TRACE coinshift::node::net_task: lib/node/net_task.rs:958: received new mailbox item mailbox_item=NewTipReady(Tip { block_hash: f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b, main_block_hash: 00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1 }, None, Some(Sender { complete: false }))
+2025-12-18T16:55:00.677367Z DEBUG coinshift::node::net_task: lib/node/net_task.rs:341: Disconnecting tip until common ancestor is reached tip=Some(Tip { block_hash: 4fbc8481fc3ff72a2a9ded63aea97bc907a9c54372cee892c7a7ea8c5884d727, main_block_hash: 0000012677803c026e56f68ca468f8f460ae73997cda76c6ef8eaa9bb6fad4e1 }) tip_height=0 common_ancestor=Some(4fbc8481fc3ff72a2a9ded63aea97bc907a9c54372cee892c7a7ea8c5884d727) common_ancestor_height=Some(0)
+2025-12-18T16:55:00.677451Z TRACE coinshift::types: lib/types/mod.rs:428: Applying diff leaves=1 roots=[35228664c745e8df4df53a37ec27a629b3fa065139e83c5b3ea4333b6150cca9] insertions=[] deletions=[]
+2025-12-18T16:55:00.677469Z DEBUG coinshift::types: lib/types/mod.rs:439: Applied diff leaves=1 roots=[35228664c745e8df4df53a37ec27a629b3fa065139e83c5b3ea4333b6150cca9]
+2025-12-18T16:55:00.677500Z TRACE coinshift::types: lib/types/mod.rs:428: Applying diff leaves=1 roots=[35228664c745e8df4df53a37ec27a629b3fa065139e83c5b3ea4333b6150cca9] insertions=[] deletions=[]
+2025-12-18T16:55:00.677512Z DEBUG coinshift::types: lib/types/mod.rs:439: Applied diff leaves=1 roots=[35228664c745e8df4df53a37ec27a629b3fa065139e83c5b3ea4333b6150cca9]
+2025-12-18T16:55:00.677529Z DEBUG coinshift::node::net_task: lib/node/net_task.rs:106: connected body height=Some(0) merkle_root=ad609aab58365210a611957240b55acd776b2a8a2ff45ddd1799af22246b1f1d block_hash=f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b
+2025-12-18T16:55:00.677540Z TRACE coinshift::state::two_way_peg_data: lib/state/two_way_peg_data.rs:805: Connecting 2WPD... block_height=1
+2025-12-18T16:55:00.677550Z DEBUG coinshift::state::two_way_peg_data: lib/state/two_way_peg_data.rs:659: Starting to scan enforcer for coinshift transactions block_height=1
+2025-12-18T16:55:00.677559Z DEBUG coinshift::state::two_way_peg_data: lib/state/two_way_peg_data.rs:664: Loaded swaps from state, scanning enforcer for matching transactions block_height=1 swap_count=0
+2025-12-18T16:55:00.677566Z DEBUG coinshift::state::two_way_peg_data: lib/state/two_way_peg_data.rs:785: Finished scanning enforcer for coinshift transactions block_height=1 total_swaps=0 pending_swaps=0 expired_swaps=0 scanned_swaps=0
+2025-12-18T16:55:00.677574Z TRACE coinshift::types: lib/types/mod.rs:428: Applying diff leaves=1 roots=[35228664c745e8df4df53a37ec27a629b3fa065139e83c5b3ea4333b6150cca9] insertions=[] deletions=[]
+2025-12-18T16:55:00.677585Z DEBUG coinshift::types: lib/types/mod.rs:439: Applied diff leaves=1 roots=[35228664c745e8df4df53a37ec27a629b3fa065139e83c5b3ea4333b6150cca9]
+2025-12-18T16:55:00.677639Z TRACE coinshift::archive: lib/archive.rs:875: Verified BMM @ 00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1: verified parent block_hash=f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b
+2025-12-18T16:55:00.677687Z  INFO coinshift::node::net_task: lib/node/net_task.rs:431: synced to tip: f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b
+2025-12-18T16:55:00.677700Z  INFO coinshift::node::net_task: lib/node/net_task.rs:437: synced to tip: f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b
+2025-12-18T16:55:00.677742Z DEBUG coinshift_app::app: app/app.rs:787: mine: BMM accepted as new tip main_hash=00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1
+2025-12-18T16:55:00.677757Z TRACE coinshift_app::app: app/app.rs:82: Updating wallet
+2025-12-18T16:55:00.677761Z TRACE coinshift_app::app: app/app.rs:60: starting wallet update
+2025-12-18T16:55:00.677810Z DEBUG coinshift_app::app: app/app.rs:72: finished wallet update
+2025-12-18T16:55:00.677821Z TRACE coinshift_app::app: app/app.rs:85: Updated wallet
+2025-12-18T16:55:00.677954Z  INFO request{method=POST uri=/ request_id="req_39b9f7df6b7f44f4928e14ceacf1275b"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=1689 ms status=200
+2025-12-18T16:55:00.678449Z DEBUG request{method=POST uri=/ request_id="req_2b387f94b5a24bf2adc8f2e04593a317"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:55:00.678530Z  INFO request{method=POST uri=/ request_id="req_2b387f94b5a24bf2adc8f2e04593a317"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=0 ms status=200
+2025-12-18T16:55:00.678816Z DEBUG request{method=POST uri=/ request_id="req_bb94dc74944e45eaa9d007048243bbdd"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:55:00.679408Z  INFO request{method=POST uri=/ request_id="req_bb94dc74944e45eaa9d007048243bbdd"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=0 ms status=200
+2025-12-18T16:55:00.681218Z DEBUG request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:55:00.681307Z TRACE request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: coinshift::wallet: lib/wallet.rs:301: Creating swap create transaction parent_chain=Signet l1_recipient_address="tb1qp0u3ua5r88mvx097j2p2l9drnh9yywu0qudelw" l1_amount=5000000 satoshi l2_recipient=Some(34gD5adoSXUmEq4tX97jbX4TMM4L) l2_amount=5000000 satoshi fee=1000 satoshi
+2025-12-18T16:55:00.681358Z DEBUG request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: coinshift::wallet: lib/wallet.rs:338: Computed swap ID using sender address from first UTXO swap_id=77986e27afad4b70ce5c04d3bf26c5580692c6764f87732ec905b8807b644079 l2_sender_address=ZzEH43XwtGsZxeQStUFTrVttGcB
+2025-12-18T16:55:00.681897Z DEBUG request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: coinshift_app::app: app/app.rs:517: sign_and_send: Starting transaction signing and sending txid=853b40613d9ea86f6d8b3b28baf7dd9582eaed8988a9471147e73640d57cabc9
+2025-12-18T16:55:00.682556Z DEBUG request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: coinshift_app::app: app/app.rs:521: sign_and_send: Transaction authorized successfully txid=853b40613d9ea86f6d8b3b28baf7dd9582eaed8988a9471147e73640d57cabc9
+2025-12-18T16:55:00.682568Z DEBUG request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: coinshift_app::app: app/app.rs:530: sign_and_send: Submitting transaction to node txid=853b40613d9ea86f6d8b3b28baf7dd9582eaed8988a9471147e73640d57cabc9
+2025-12-18T16:55:00.682944Z DEBUG request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: coinshift::mempool: lib/mempool.rs:74: adding transaction 853b40613d9ea86f6d8b3b28baf7dd9582eaed8988a9471147e73640d57cabc9 to mempool
+2025-12-18T16:55:00.682990Z TRACE request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: coinshift::net: lib/net/mod.rs:565: skipping peer at 172.105.148.135:4255 because it is not fully connected addr=172.105.148.135:4255
+2025-12-18T16:55:00.683001Z TRACE request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: coinshift::net: lib/net/mod.rs:565: skipping peer at 95.217.243.12:4255 because it is not fully connected addr=95.217.243.12:4255
+2025-12-18T16:55:00.683012Z DEBUG request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: coinshift_app::app: app/app.rs:533: sign_and_send: Transaction submitted to node successfully txid=853b40613d9ea86f6d8b3b28baf7dd9582eaed8988a9471147e73640d57cabc9
+2025-12-18T16:55:00.683023Z DEBUG request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: coinshift_app::app: app/app.rs:546: sign_and_send: Updating wallet state txid=853b40613d9ea86f6d8b3b28baf7dd9582eaed8988a9471147e73640d57cabc9
+2025-12-18T16:55:00.683033Z TRACE request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: coinshift_app::app: app/app.rs:82: Updating wallet
+2025-12-18T16:55:00.683039Z TRACE request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: coinshift_app::app: app/app.rs:60: starting wallet update
+2025-12-18T16:55:00.683072Z DEBUG request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: coinshift_app::app: app/app.rs:72: finished wallet update
+2025-12-18T16:55:00.683085Z TRACE request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: coinshift_app::app: app/app.rs:85: Updated wallet
+2025-12-18T16:55:00.683093Z DEBUG request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: coinshift_app::app: app/app.rs:549: sign_and_send: Wallet updated successfully txid=853b40613d9ea86f6d8b3b28baf7dd9582eaed8988a9471147e73640d57cabc9
+2025-12-18T16:55:00.683103Z  INFO request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: coinshift_app::app: app/app.rs:562: sign_and_send: Transaction signed and sent successfully txid=853b40613d9ea86f6d8b3b28baf7dd9582eaed8988a9471147e73640d57cabc9
+2025-12-18T16:55:00.683135Z  INFO request{method=POST uri=/ request_id="req_53eaa5d3e56f4a42b282f0908ea2651e"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=1 ms status=200
+2025-12-18T16:55:01.687837Z DEBUG request{method=POST uri=/ request_id="req_dee957842b134639bffc5c1a7e678950"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:55:01.688840Z  INFO request{method=POST uri=/ request_id="req_dee957842b134639bffc5c1a7e678950"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=1 ms status=200
+2025-12-18T16:55:04.695941Z DEBUG request{method=POST uri=/ request_id="req_f1eb464eaaee4d718d0ac387a8983965"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:55:04.696724Z  INFO request{method=POST uri=/ request_id="req_f1eb464eaaee4d718d0ac387a8983965"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=0 ms status=200
+2025-12-18T16:55:04.698675Z DEBUG request{method=POST uri=/ request_id="req_618908af4f3741f09d9fa4b9359b708a"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:55:04.699287Z  INFO request{method=POST uri=/ request_id="req_618908af4f3741f09d9fa4b9359b708a"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=0 ms status=200
+2025-12-18T16:55:04.700446Z DEBUG request{method=POST uri=/ request_id="req_56bcf1d187024684bde5408819d66cf5"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:55:04.700780Z  INFO request{method=POST uri=/ request_id="req_56bcf1d187024684bde5408819d66cf5"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=0 ms status=200
+2025-12-18T16:55:04.701474Z DEBUG request{method=POST uri=/ request_id="req_614b7a93cad54e908c445205c42e4960"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:55:04.701602Z  INFO request{method=POST uri=/ request_id="req_614b7a93cad54e908c445205c42e4960"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=0 ms status=200
+2025-12-18T16:55:04.702138Z DEBUG request{method=POST uri=/ request_id="req_ec2a4feccbde4fd598fbc9c7e2e9c31e"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:55:04.702369Z  INFO request{method=POST uri=/ request_id="req_ec2a4feccbde4fd598fbc9c7e2e9c31e"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=0 ms status=200
+2025-12-18T16:55:04.703281Z DEBUG request{method=POST uri=/ request_id="req_048f9dd1569b468a88dafe143861aa99"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:55:04.728522Z  INFO coinshift::miner: lib/miner.rs:62: attempt BMM: created TX: 913ef6b322f4208842eab02e93f735ffc33e30b11415bd8eda25cb24559ab356
+2025-12-18T16:55:04.728552Z DEBUG coinshift_app::app: app/app.rs:770: mine: confirming BMM... bmm_txid=913ef6b322f4208842eab02e93f735ffc33e30b11415bd8eda25cb24559ab356
+2025-12-18T16:55:04.728584Z DEBUG coinshift::miner: lib/miner.rs:78: confirm BMM: verifying... block_hash=bbf002d9f4269f058ae43964fb254cc1dc56614b81ca5451ccad6b0e4c8d1bcd
+2025-12-18T16:55:04.931342Z TRACE coinshift_app::app: app/app.rs:135: L1 sync task: checking for new L1 blocks
+2025-12-18T16:55:04.932651Z TRACE coinshift_app::app: app/app.rs:148: L1 sync task: got L1 chain tip l1_tip=00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1
+2025-12-18T16:55:04.932734Z TRACE coinshift_app::app: app/app.rs:167: L1 sync task: got synced main hash sidechain_tip=f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b synced_main=Some(00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1)
+2025-12-18T16:55:04.932759Z TRACE coinshift_app::app: app/app.rs:184: L1 sync task: comparing tips l1_tip=00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1 synced_main=00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1 needs_sync=false
+2025-12-18T16:55:04.932780Z TRACE coinshift_app::app: app/app.rs:260: L1 sync task: L1 is up to date, no sync needed
+2025-12-18T16:55:06.310352Z DEBUG coinshift::miner: lib/miner.rs:91: confirm BMM: verified! side_hash=bbf002d9f4269f058ae43964fb254cc1dc56614b81ca5451ccad6b0e4c8d1bcd main_height=113 main_hash=000000d4f7b419c2db18ea8689e96c37b3d4139e97e91a3fadd8556b00986072 bmm_commitment=bbf002d9f4269f058ae43964fb254cc1dc56614b81ca5451ccad6b0e4c8d1bcd
+2025-12-18T16:55:06.310439Z DEBUG coinshift_app::app: app/app.rs:776: mine: confirmed BMM, submitting block main_hash=000000d4f7b419c2db18ea8689e96c37b3d4139e97e91a3fadd8556b00986072 side_hash=bbf002d9f4269f058ae43964fb254cc1dc56614b81ca5451ccad6b0e4c8d1bcd
+2025-12-18T16:55:06.310543Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:109: request_ancestor_infos: Starting to request ancestor headers/info block_hash=000000d4f7b419c2db18ea8689e96c37b3d4139e97e91a3fadd8556b00986072
+2025-12-18T16:55:06.310561Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:138: request_ancestor_infos: Requesting first batch from tip block_hash=000000d4f7b419c2db18ea8689e96c37b3d4139e97e91a3fadd8556b00986072 batch=1
+2025-12-18T16:55:06.315178Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:159: request_ancestor_infos: Received batch, processing next block_hash=000000d4f7b419c2db18ea8689e96c37b3d4139e97e91a3fadd8556b00986072 batch=1 batch_size=114 total_blocks=114 batch_elapsed_secs=0.004608958 next_height=None
+2025-12-18T16:55:06.315202Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:169: request_ancestor_infos: Reached genesis block block_hash=000000d4f7b419c2db18ea8689e96c37b3d4139e97e91a3fadd8556b00986072
+2025-12-18T16:55:06.315212Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:187: request_ancestor_infos: Finished fetching, reversing and storing block_hash=000000d4f7b419c2db18ea8689e96c37b3d4139e97e91a3fadd8556b00986072 total_blocks=114 batches=1 fetch_elapsed_secs=0.004681333
+2025-12-18T16:55:06.315226Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:197: request_ancestor_infos: Starting to store ancestor headers/info to archive block_hash=000000d4f7b419c2db18ea8689e96c37b3d4139e97e91a3fadd8556b00986072
+2025-12-18T16:55:06.317831Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:224: request_ancestor_infos: Successfully stored all ancestor headers/info block_hash=000000d4f7b419c2db18ea8689e96c37b3d4139e97e91a3fadd8556b00986072 blocks_stored=114 store_elapsed_secs=0.002603375 total_elapsed_secs=0.007298583
+2025-12-18T16:55:06.317894Z TRACE coinshift::node: lib/node/mod.rs:699: Storing header: bbf002d9f4269f058ae43964fb254cc1dc56614b81ca5451ccad6b0e4c8d1bcd
+2025-12-18T16:55:06.317984Z TRACE coinshift::archive: lib/archive.rs:875: Verified BMM @ 000000d4f7b419c2db18ea8689e96c37b3d4139e97e91a3fadd8556b00986072: verified parent block_hash=bbf002d9f4269f058ae43964fb254cc1dc56614b81ca5451ccad6b0e4c8d1bcd
+2025-12-18T16:55:06.318013Z TRACE coinshift::node: lib/node/mod.rs:705: Stored header: bbf002d9f4269f058ae43964fb254cc1dc56614b81ca5451ccad6b0e4c8d1bcd
+2025-12-18T16:55:06.318094Z DEBUG coinshift::node::net_task: lib/node/net_task.rs:1245: sending new tip ready confirm new_tip=Tip { block_hash: bbf002d9f4269f058ae43964fb254cc1dc56614b81ca5451ccad6b0e4c8d1bcd, main_block_hash: 000000d4f7b419c2db18ea8689e96c37b3d4139e97e91a3fadd8556b00986072 }
+2025-12-18T16:55:06.318157Z TRACE coinshift::node::net_task: lib/node/net_task.rs:958: received new mailbox item mailbox_item=NewTipReady(Tip { block_hash: bbf002d9f4269f058ae43964fb254cc1dc56614b81ca5451ccad6b0e4c8d1bcd, main_block_hash: 000000d4f7b419c2db18ea8689e96c37b3d4139e97e91a3fadd8556b00986072 }, None, Some(Sender { complete: false }))
+2025-12-18T16:55:06.318273Z DEBUG coinshift::node::net_task: lib/node/net_task.rs:341: Disconnecting tip until common ancestor is reached tip=Some(Tip { block_hash: f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b, main_block_hash: 00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1 }) tip_height=1 common_ancestor=Some(f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b) common_ancestor_height=Some(1)
+2025-12-18T16:55:06.318791Z TRACE coinshift::types: lib/types/mod.rs:428: Applying diff leaves=1 roots=[35228664c745e8df4df53a37ec27a629b3fa065139e83c5b3ea4333b6150cca9] insertions=[87dff2a3dfa48195322363ee9b22579114fbc1539f9a68064e67d4d63ed6b89e, a9e0e2028cd0a1c87ff2eb828488308746c8c313b4ba0fc81357551809774c88, 43767e941b7ea6af4499daa9f32fdf34f36fb8ed0eab245323b82b49516dae75] deletions=[35228664c745e8df4df53a37ec27a629b3fa065139e83c5b3ea4333b6150cca9]
+2025-12-18T16:55:06.318840Z DEBUG coinshift::types: lib/types/mod.rs:439: Applied diff leaves=4 roots=[5cfd49dc2f55b681d3741485dd53b8f780a65e0906ecabe8177bdc31c6182698]
+2025-12-18T16:55:06.318888Z DEBUG coinshift::state::block: lib/state/block.rs:317: Reconstructed swap from SwapCreate transaction, about to save swap_id=77986e27afad4b70ce5c04d3bf26c5580692c6764f87732ec905b8807b644079 l2_recipient=Some(34gD5adoSXUmEq4tX97jbX4TMM4L) l2_amount=0.05000000 BTC l1_amount=Some(5000000 SAT) state=Pending
+2025-12-18T16:55:06.318918Z DEBUG coinshift::state::block: lib/state/block.rs:340: About to save swap during block connection swap_id=77986e27afad4b70ce5c04d3bf26c5580692c6764f87732ec905b8807b644079
+2025-12-18T16:55:06.318926Z DEBUG coinshift::state: lib/state/mod.rs:557: Saving swap to database swap_id=77986e27afad4b70ce5c04d3bf26c5580692c6764f87732ec905b8807b644079 state=Pending
+2025-12-18T16:55:06.318936Z DEBUG coinshift::state: lib/state/mod.rs:575: No existing swap to delete, continuing with save swap_id=77986e27afad4b70ce5c04d3bf26c5580692c6764f87732ec905b8807b644079
+2025-12-18T16:55:06.318968Z ERROR coinshift::state: lib/state/mod.rs:621: Failed to read back swap after saving - serialization/deserialization mismatch. This indicates the swap was saved in an invalid format. swap_id=77986e27afad4b70ce5c04d3bf26c5580692c6764f87732ec905b8807b644079 error=Failed to read from db `swaps` at `/tmp/t58c08-0/coinshift-fill-swap-test/data.mdb` (key: `77986e27afad4b70ce5c04d3bf26c5580692c6764f87732ec905b8807b644079`) error_display=Failed to read from db `swaps` at `/tmp/t58c08-0/coinshift-fill-swap-test/data.mdb` (key: `77986e27afad4b70ce5c04d3bf26c5580692c6764f87732ec905b8807b644079`) error_debug=TryGet { db_name: "swaps", db_path: "/tmp/t58c08-0/coinshift-fill-swap-test/data.mdb", key_bytes: Ok([119, 152, 110, 39, 175, 173, 75, 112, 206, 92, 4, 211, 191, 38, 197, 88, 6, 146, 198, 118, 79, 135, 115, 46, 201, 5, 184, 128, 123, 100, 64, 121]), source: Decoding(InvalidTagEncoding(64)) } error_chain=TryGet { db_name: "swaps", db_path: "/tmp/t58c08-0/coinshift-fill-swap-test/data.mdb", key_bytes: Ok([119, 152, 110, 39, 175, 173, 75, 112, 206, 92, 4, 211, 191, 38, 197, 88, 6, 146, 198, 118, 79, 135, 115, 46, 201, 5, 184, 128, 123, 100, 64, 121]), source: Decoding(InvalidTagEncoding(64)) }
+2025-12-18T16:55:06.319014Z  WARN coinshift::state: lib/state/mod.rs:631: Deleting corrupted swap that was just saved swap_id=77986e27afad4b70ce5c04d3bf26c5580692c6764f87732ec905b8807b644079
+2025-12-18T16:55:06.319053Z ERROR coinshift_app::app: app/app.rs:784: net task error: Receive reorg result cancelled (oneshot): oneshot canceled
+2025-12-18T16:55:06.319063Z ERROR coinshift::node::net_task: lib/node/net_task.rs:1228: Net task error: state error: Invalid transaction: Swap 77986e27afad4b70ce5c04d3bf26c5580692c6764f87732ec905b8807b644079 was saved but cannot be deserialized - serialization format error: Failed to read from db `swaps` at `/tmp/t58c08-0/coinshift-fill-swap-test/data.mdb` (key: `77986e27afad4b70ce5c04d3bf26c5580692c6764f87732ec905b8807b644079`)
+2025-12-18T16:55:06.319198Z  INFO request{method=POST uri=/ request_id="req_048f9dd1569b468a88dafe143861aa99"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=1615 ms status=200
+2025-12-18T16:55:14.935689Z TRACE coinshift_app::app: app/app.rs:135: L1 sync task: checking for new L1 blocks
+2025-12-18T16:55:14.942959Z TRACE coinshift_app::app: app/app.rs:148: L1 sync task: got L1 chain tip l1_tip=000000d4f7b419c2db18ea8689e96c37b3d4139e97e91a3fadd8556b00986072
+2025-12-18T16:55:14.943238Z TRACE coinshift_app::app: app/app.rs:167: L1 sync task: got synced main hash sidechain_tip=f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b synced_main=Some(00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1)
+2025-12-18T16:55:14.943291Z TRACE coinshift_app::app: app/app.rs:184: L1 sync task: comparing tips l1_tip=000000d4f7b419c2db18ea8689e96c37b3d4139e97e91a3fadd8556b00986072 synced_main=00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1 needs_sync=true
+2025-12-18T16:55:14.943426Z TRACE coinshift_app::app: app/app.rs:206: L1 sync task: checked if L1 tip is in archive l1_tip=000000d4f7b419c2db18ea8689e96c37b3d4139e97e91a3fadd8556b00986072 has_l1_tip=true
+2025-12-18T16:55:14.943462Z TRACE coinshift_app::app: app/app.rs:254: L1 sync task: L1 tip already in archive, no sync needed l1_tip=000000d4f7b419c2db18ea8689e96c37b3d4139e97e91a3fadd8556b00986072
+2025-12-18T16:55:16.321995Z DEBUG request{method=POST uri=/ request_id="req_43f7b6c218ec4146aa264b7df8793b66"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:55:16.322255Z  INFO request{method=POST uri=/ request_id="req_43f7b6c218ec4146aa264b7df8793b66"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=0 ms status=200
+2025-12-18T16:55:16.323372Z DEBUG request{method=POST uri=/ request_id="req_1e6ff6debcec4474bddf21c3505fe1bf"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:55:16.345303Z  INFO coinshift::miner: lib/miner.rs:62: attempt BMM: created TX: d994b4b93f3deebb74b551f1e30f5125777f91d77c504ab14d222332cfe2baf3
+2025-12-18T16:55:16.345351Z DEBUG coinshift_app::app: app/app.rs:770: mine: confirming BMM... bmm_txid=d994b4b93f3deebb74b551f1e30f5125777f91d77c504ab14d222332cfe2baf3
+2025-12-18T16:55:16.345387Z DEBUG coinshift::miner: lib/miner.rs:78: confirm BMM: verifying... block_hash=9d8cd8f47fbbe087eeec603589cae487909428d345f8a236c5251accf57457a6
+2025-12-18T16:55:18.128303Z DEBUG coinshift::miner: lib/miner.rs:91: confirm BMM: verified! side_hash=9d8cd8f47fbbe087eeec603589cae487909428d345f8a236c5251accf57457a6 main_height=114 main_hash=000001eacf50816f360e00e20841d15a9d87f8335cacc05ba02277dc8d72678e bmm_commitment=9d8cd8f47fbbe087eeec603589cae487909428d345f8a236c5251accf57457a6
+2025-12-18T16:55:18.128405Z DEBUG coinshift_app::app: app/app.rs:776: mine: confirmed BMM, submitting block main_hash=000001eacf50816f360e00e20841d15a9d87f8335cacc05ba02277dc8d72678e side_hash=9d8cd8f47fbbe087eeec603589cae487909428d345f8a236c5251accf57457a6
+2025-12-18T16:55:18.128488Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:109: request_ancestor_infos: Starting to request ancestor headers/info block_hash=000001eacf50816f360e00e20841d15a9d87f8335cacc05ba02277dc8d72678e
+2025-12-18T16:55:18.128507Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:138: request_ancestor_infos: Requesting first batch from tip block_hash=000001eacf50816f360e00e20841d15a9d87f8335cacc05ba02277dc8d72678e batch=1
+2025-12-18T16:55:18.133316Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:159: request_ancestor_infos: Received batch, processing next block_hash=000001eacf50816f360e00e20841d15a9d87f8335cacc05ba02277dc8d72678e batch=1 batch_size=115 total_blocks=115 batch_elapsed_secs=0.004798709 next_height=None
+2025-12-18T16:55:18.133352Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:169: request_ancestor_infos: Reached genesis block block_hash=000001eacf50816f360e00e20841d15a9d87f8335cacc05ba02277dc8d72678e
+2025-12-18T16:55:18.133363Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:187: request_ancestor_infos: Finished fetching, reversing and storing block_hash=000001eacf50816f360e00e20841d15a9d87f8335cacc05ba02277dc8d72678e total_blocks=115 batches=1 fetch_elapsed_secs=0.004887334
+2025-12-18T16:55:18.133375Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:197: request_ancestor_infos: Starting to store ancestor headers/info to archive block_hash=000001eacf50816f360e00e20841d15a9d87f8335cacc05ba02277dc8d72678e
+2025-12-18T16:55:18.135917Z  INFO coinshift::node::mainchain_task: lib/node/mainchain_task.rs:224: request_ancestor_infos: Successfully stored all ancestor headers/info block_hash=000001eacf50816f360e00e20841d15a9d87f8335cacc05ba02277dc8d72678e blocks_stored=115 store_elapsed_secs=0.002539959 total_elapsed_secs=0.007439709
+2025-12-18T16:55:18.135970Z TRACE coinshift::node: lib/node/mod.rs:699: Storing header: 9d8cd8f47fbbe087eeec603589cae487909428d345f8a236c5251accf57457a6
+2025-12-18T16:55:18.136059Z TRACE coinshift::archive: lib/archive.rs:875: Verified BMM @ 000001eacf50816f360e00e20841d15a9d87f8335cacc05ba02277dc8d72678e: verified parent block_hash=9d8cd8f47fbbe087eeec603589cae487909428d345f8a236c5251accf57457a6
+2025-12-18T16:55:18.136087Z TRACE coinshift::node: lib/node/mod.rs:705: Stored header: 9d8cd8f47fbbe087eeec603589cae487909428d345f8a236c5251accf57457a6
+2025-12-18T16:55:18.136166Z DEBUG coinshift::node::net_task: lib/node/net_task.rs:1245: sending new tip ready confirm new_tip=Tip { block_hash: 9d8cd8f47fbbe087eeec603589cae487909428d345f8a236c5251accf57457a6, main_block_hash: 000001eacf50816f360e00e20841d15a9d87f8335cacc05ba02277dc8d72678e }
+2025-12-18T16:55:18.136183Z ERROR coinshift_app::app: app/app.rs:784: net task error: Send new tip ready failed: send failed because receiver is gone
+2025-12-18T16:55:18.136382Z  INFO request{method=POST uri=/ request_id="req_1e6ff6debcec4474bddf21c3505fe1bf"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=1813 ms status=200
+2025-12-18T16:55:24.928999Z ERROR coinshift::net: lib/net/mod.rs:297: Failed to send peer connection info addr=95.217.243.12:4255
+2025-12-18T16:55:24.929041Z ERROR coinshift::net: lib/net/mod.rs:297: Failed to send peer connection info addr=172.105.148.135:4255
+2025-12-18T16:55:24.945958Z TRACE coinshift_app::app: app/app.rs:135: L1 sync task: checking for new L1 blocks
+2025-12-18T16:55:24.950656Z TRACE coinshift_app::app: app/app.rs:148: L1 sync task: got L1 chain tip l1_tip=000001eacf50816f360e00e20841d15a9d87f8335cacc05ba02277dc8d72678e
+2025-12-18T16:55:24.950902Z TRACE coinshift_app::app: app/app.rs:167: L1 sync task: got synced main hash sidechain_tip=f9d981114bf71691d2e72627595c27fb25f95bcf4fd715b32f2f3ca5ea3dfc3b synced_main=Some(00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1)
+2025-12-18T16:55:24.950964Z TRACE coinshift_app::app: app/app.rs:184: L1 sync task: comparing tips l1_tip=000001eacf50816f360e00e20841d15a9d87f8335cacc05ba02277dc8d72678e synced_main=00000333e79dce57afdffb06b4b072d3d97e3484b69aee55c41c937bba178cd1 needs_sync=true
+2025-12-18T16:55:24.951044Z TRACE coinshift_app::app: app/app.rs:206: L1 sync task: checked if L1 tip is in archive l1_tip=000001eacf50816f360e00e20841d15a9d87f8335cacc05ba02277dc8d72678e has_l1_tip=true
+2025-12-18T16:55:24.951083Z TRACE coinshift_app::app: app/app.rs:254: L1 sync task: L1 tip already in archive, no sync needed l1_tip=000001eacf50816f360e00e20841d15a9d87f8335cacc05ba02277dc8d72678e
+2025-12-18T16:55:28.140001Z DEBUG request{method=POST uri=/ request_id="req_d235d240fd5a4fa79269bafb71c84d30"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:55:28.140722Z  INFO request{method=POST uri=/ request_id="req_d235d240fd5a4fa79269bafb71c84d30"}: tower_http::trace::on_response: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tower-http-0.6.2/src/trace/on_response.rs:114: finished processing request latency=0 ms status=200
+2025-12-18T16:55:28.142925Z DEBUG request{method=POST uri=/ request_id="req_4b884c10ec0c4d5cbc0057e1edb5e63c"}: jsonrpsee-server: /home/parallels/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jsonrpsee-server-0.25.1/src/server.rs:1013: Accepting new connection 1/100
+2025-12-18T16:55:28.173478Z  INFO coinshift::miner: lib/miner.rs:62: attempt BMM: created TX: 8e622392b54e1fde92f7810fb15d983287b8a82de2ec2c2a63503f39ab5d8049
+2025-12-18T16:55:28.173534Z DEBUG coinshift_app::app: app/app.rs:770: mine: confirming BMM... bmm_txid=8e622392b54e1fde92f7810fb15d983287b8a82de2ec2c2a63503f39ab5d8049
+2025-12-18T16:55:28.173575Z DEBUG coinshift::miner: lib/miner.rs:78: confirm BMM: verifying... block_hash=86276b01e60795f00df1938622d1c7d51563d43905663f5e067779b5c9abfebc

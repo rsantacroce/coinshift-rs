@@ -612,17 +612,17 @@ fn query_and_update_swap(
         if *confirmations >= swap.required_confirmations {
             swap.state = SwapState::ReadyToClaim;
         } else {
-            swap.state = SwapState::WaitingConfirmations {
-                current_confirmations: *confirmations,
-                required_confirmations: swap.required_confirmations,
-            };
+            swap.state = SwapState::WaitingConfirmations(
+                *confirmations,
+                swap.required_confirmations,
+            );
         }
         
         Ok(true)
     } else {
         // Update confirmations for existing transaction
         let current_confirmations = match swap.state {
-            SwapState::WaitingConfirmations { current_confirmations, .. } => current_confirmations,
+            SwapState::WaitingConfirmations(current, _) => current,
             _ => 0,
         };
         
@@ -637,10 +637,10 @@ fn query_and_update_swap(
             if *confirmations >= swap.required_confirmations {
                 swap.state = SwapState::ReadyToClaim;
             } else {
-                swap.state = SwapState::WaitingConfirmations {
-                    current_confirmations: *confirmations,
-                    required_confirmations: swap.required_confirmations,
-                };
+                swap.state = SwapState::WaitingConfirmations(
+                    *confirmations,
+                    swap.required_confirmations,
+                );
             }
             
             Ok(true)
@@ -675,7 +675,7 @@ fn process_coinshift_transactions(
         // Only process L2 → L1 swaps that are pending or waiting for confirmations
         if !matches!(
             swap.state,
-            SwapState::Pending | SwapState::WaitingConfirmations { .. }
+            SwapState::Pending | SwapState::WaitingConfirmations(..)
         ) {
             continue;
         }
