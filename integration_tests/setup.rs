@@ -14,7 +14,7 @@ use bip300301_enforcer_lib::{
     bins::CommandExt,
     types::SidechainNumber,
 };
-use futures::{TryFutureExt as _, channel::mpsc, future};
+use futures::{channel::mpsc, future};
 use reserve_port::ReservedPort;
 use thiserror::Error;
 use coinshift::types::{OutputContent, PointedOutput};
@@ -171,8 +171,20 @@ impl PostSetup {
         tracing::debug!("Starting BMM: calling mine() on sidechain and mainchain");
         let result = future::try_join(
             async {
-                tracing::debug!("BMM: Starting sidechain mine() call");
-                let result = self.rpc_client.mine(None).await;
+                tracing::debug!("BMM: Starting sidechain mine() call (with 60s timeout)");
+                // Add a timeout to prevent hanging for too long
+                // Using 60s to match typical HTTP client timeout, but fail faster for retries
+                let result = match tokio::time::timeout(
+                    Duration::from_secs(60),
+                    self.rpc_client.mine(None)
+                ).await {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(e)) => Err(e),
+                    Err(_) => {
+                        tracing::error!("BMM: Sidechain mine() timed out after 60 seconds - mainchain task may be unresponsive");
+                        Err(jsonrpsee::core::ClientError::RequestTimeout)
+                    }
+                };
                 match &result {
                     Ok(_) => tracing::debug!("BMM: Sidechain mine() succeeded"),
                     Err(e) => tracing::error!("BMM: Sidechain mine() failed: {:#}", e),

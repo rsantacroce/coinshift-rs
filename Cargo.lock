@@ -1544,6 +1544,7 @@ name = "coinshift_integration_tests"
 version = "0.14.0-alpha"
 dependencies = [
  "anyhow",
+ "bincode",
  "bip300301_enforcer_integration_tests",
  "bip300301_enforcer_lib",
  "bitcoin",
@@ -1553,11 +1554,15 @@ dependencies = [
  "coinshift_app_rpc_api",
  "dotenvy",
  "futures",
+ "heed",
  "hex 0.4.3",
  "jsonrpsee",
  "libtest-mimic",
  "reserve-port",
+ "serde",
  "serde_json",
+ "sneed",
+ "tempfile",
  "thiserror 2.0.12",
  "tokio",
  "tracing",

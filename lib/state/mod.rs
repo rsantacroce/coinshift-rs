@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use bincode;
 use fallible_iterator::FallibleIterator;
 use futures::Stream;
 use heed::types::SerdeBincode;
@@ -589,6 +590,16 @@ impl State {
         }
         
         // Save to main swaps database
+        // Log swap details before saving to help diagnose serialization issues
+        tracing::debug!(
+            swap_id = %swap.id,
+            direction = ?swap.direction,
+            parent_chain = ?swap.parent_chain,
+            state = ?swap.state,
+            l1_txid = ?swap.l1_txid,
+            "Saving swap to database"
+        );
+        
         self.swaps
             .put(rwtxn, &swap.id, swap)
             .map_err(|e| {
@@ -601,40 +612,122 @@ impl State {
             })?;
         
         // Verify we can read it back immediately to catch serialization issues
-        match self.swaps.try_get(rwtxn, &swap.id) {
-            Ok(Some(_)) => {
+        // First, try to serialize the swap ourselves to see if there's an issue
+        let test_serialized = match bincode::serialize(swap) {
+            Ok(bytes) => {
                 tracing::debug!(
                     swap_id = %swap.id,
-                    "Successfully verified swap can be read back after saving"
+                    serialized_size = bytes.len(),
+                    "Successfully serialized swap with bincode for verification"
                 );
+                Some(bytes)
+            }
+            Err(e) => {
+                tracing::error!(
+                    swap_id = %swap.id,
+                    error = %e,
+                    "Failed to serialize swap with bincode - this indicates a serialization bug"
+                );
+                None
+            }
+        };
+        
+        // Now try to read it back from the database
+        match self.swaps.try_get(rwtxn, &swap.id) {
+            Ok(Some(read_swap)) => {
+                // Verify the read swap matches what we saved
+                if read_swap.id != swap.id {
+                    tracing::error!(
+                        swap_id = %swap.id,
+                        read_swap_id = %read_swap.id,
+                        "Swap ID mismatch after read - database corruption?"
+                    );
+                } else {
+                    tracing::debug!(
+                        swap_id = %swap.id,
+                        "Successfully verified swap can be read back after saving"
+                    );
+                }
             }
             Ok(None) => {
                 tracing::warn!(
                     swap_id = %swap.id,
                     "Swap was saved but cannot be read back immediately - possible serialization issue"
                 );
+                // Try to deserialize our test serialization to see if that works
+                if let Some(test_bytes) = &test_serialized {
+                    match bincode::deserialize::<Swap>(test_bytes) {
+                        Ok(_) => {
+                            tracing::warn!(
+                                swap_id = %swap.id,
+                                "Test serialization/deserialization works, but database read fails - possible database corruption"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                swap_id = %swap.id,
+                                error = %e,
+                                "Test serialization/deserialization also fails - this confirms a serialization bug"
+                            );
+                        }
+                    }
+                }
             }
             Err(e) => {
                 // Log the full error chain to help diagnose the issue
                 let err_str = format!("{e:#}");
                 let err_debug = format!("{e:?}");
+                
+                // Check if it's the InvalidTagEncoding error
+                let is_invalid_tag = err_str.contains("InvalidTagEncoding") || err_debug.contains("InvalidTagEncoding");
+                
+                // Try to get more information about what was actually written
                 tracing::error!(
                     swap_id = %swap.id,
                     error = %e,
                     error_display = %err_str,
                     error_debug = ?e,
                     error_chain = %err_debug,
+                    is_invalid_tag_encoding = is_invalid_tag,
+                    direction = ?swap.direction,
+                    parent_chain = ?swap.parent_chain,
+                    state = ?swap.state,
+                    l1_txid = ?swap.l1_txid,
+                    l1_recipient_address = ?swap.l1_recipient_address,
+                    l1_claimer_address = ?swap.l1_claimer_address,
                     "Failed to read back swap after saving - serialization/deserialization mismatch. This indicates the swap was saved in an invalid format."
                 );
+                
+                // If we have test serialization, try to deserialize it to see if the issue is with the database or the serialization itself
+                if let Some(test_bytes) = &test_serialized {
+                    match bincode::deserialize::<Swap>(test_bytes) {
+                        Ok(_) => {
+                            tracing::error!(
+                                swap_id = %swap.id,
+                                "Test serialization/deserialization works, but database read fails - possible database corruption or encoding mismatch"
+                            );
+                        }
+                        Err(deser_err) => {
+                            tracing::error!(
+                                swap_id = %swap.id,
+                                deserialization_error = %deser_err,
+                                "Test serialization/deserialization also fails - this confirms a serialization bug in the Swap struct"
+                            );
+                        }
+                    }
+                }
+                
                 // This is a critical error - the swap was saved but can't be read back
-                // Delete it to prevent further issues
+                // Delete it to prevent further issues and avoid crashing the net task
                 tracing::warn!(
                     swap_id = %swap.id,
-                    "Deleting corrupted swap that was just saved"
+                    "Deleting corrupted swap that was just saved to prevent further errors"
                 );
                 drop(self.swaps.delete(rwtxn, &swap.id));
+                
+                // Return error but don't crash - let the caller handle it
                 return Err(Error::InvalidTransaction(format!(
-                    "Swap {} was saved but cannot be deserialized - serialization format error: {}",
+                    "Swap {} was saved but cannot be deserialized - serialization format error: {}. This is likely a bug in the serialization code.",
                     swap.id, err_str
                 )));
             }
@@ -1373,10 +1466,10 @@ impl State {
         if confirmations >= swap.required_confirmations {
             swap.state = SwapState::ReadyToClaim;
         } else {
-            swap.state = SwapState::WaitingConfirmations {
-                current_confirmations: confirmations,
-                required_confirmations: swap.required_confirmations,
-            };
+            swap.state = SwapState::WaitingConfirmations(
+                confirmations,
+                swap.required_confirmations,
+            );
         }
 
         // Update indexes
