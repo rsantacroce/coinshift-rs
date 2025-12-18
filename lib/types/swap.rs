@@ -228,43 +228,29 @@ impl SwapTxId {
     }
 }
 
-// Serde helpers for Amount serialization (similar to BitAssetData approach)
-// These serialize Amount as u64 to ensure compatibility with bincode
-mod serde_amount {
+
+// Custom serde module for Option<Amount> that serializes as Option<u64>
+// This ensures proper roundtrip serialization with bincode
+mod amount_opt_serde {
     use bitcoin::Amount;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S>(amount: &Amount, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        amount.to_sat().serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Amount, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        u64::deserialize(deserializer).map(Amount::from_sat)
-    }
-}
-
-mod serde_amount_option {
-    use bitcoin::Amount;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S>(amount: &Option<Amount>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        amount.map(|amt| amt.to_sat()).serialize(serializer)
+        match amount {
+            Some(amt) => serializer.serialize_some(&amt.to_sat()),
+            None => serializer.serialize_none(),
+        }
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Amount>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        Option::<u64>::deserialize(deserializer).map(|opt| opt.map(Amount::from_sat))
+        let opt: Option<u64> = Option::deserialize(deserializer)?;
+        Ok(opt.map(Amount::from_sat))
     }
 }
 
@@ -287,11 +273,11 @@ pub struct Swap {
     pub state: SwapState,
     /// L2 recipient address. None means open swap (anyone can fill)
     pub l2_recipient: Option<Address>,
-    #[serde(with = "serde_amount")]
+    #[serde(with = "bitcoin::amount::serde::as_sat")]
     #[schema(value_type = u64)]
     pub l2_amount: bitcoin::Amount,
     pub l1_recipient_address: Option<String>,
-    #[serde(with = "serde_amount_option")]
+    #[serde(with = "amount_opt_serde")]
     #[schema(value_type = Option<u64>)]
     pub l1_amount: Option<bitcoin::Amount>,
     /// Address of the person who sent the L1 transaction (the claimer)

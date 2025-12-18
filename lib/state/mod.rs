@@ -589,6 +589,47 @@ impl State {
             }
         }
         
+        // Verify we can serialize and deserialize the swap before saving to catch issues early
+        // This helps catch serialization issues before saving to the database
+        // Note: This uses bincode directly, while heed uses SerdeBincode which may have different config
+        // But if basic bincode serialization fails, SerdeBincode will also fail
+        match bincode::serialize(swap) {
+            Ok(bytes) => {
+                // Try to deserialize it immediately to verify roundtrip works
+                match bincode::deserialize::<Swap>(&bytes) {
+                    Ok(_) => {
+                        tracing::debug!(
+                            swap_id = %swap.id,
+                            serialized_size = bytes.len(),
+                            "Successfully serialized and deserialized swap with bincode for verification"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            swap_id = %swap.id,
+                            error = %e,
+                            "Failed to deserialize swap after serialization - this indicates a serialization bug. Swap will not be saved."
+                        );
+                        return Err(Error::InvalidTransaction(format!(
+                            "Swap {} cannot be serialized/deserialized correctly - serialization bug: {}",
+                            swap.id, e
+                        )));
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    swap_id = %swap.id,
+                    error = %e,
+                    "Failed to serialize swap with bincode - this indicates a serialization bug. Swap will not be saved."
+                );
+                return Err(Error::InvalidTransaction(format!(
+                    "Swap {} cannot be serialized - serialization bug: {}",
+                    swap.id, e
+                )));
+            }
+        }
+        
         // Save to main swaps database
         // Log swap details before saving to help diagnose serialization issues
         tracing::debug!(
@@ -612,7 +653,7 @@ impl State {
             })?;
         
         // Verify we can read it back immediately to catch serialization issues
-        // First, try to serialize the swap ourselves to see if there's an issue
+        // This checks if heed::SerdeBincode serialization matches our expectations
         let test_serialized = match bincode::serialize(swap) {
             Ok(bytes) => {
                 tracing::debug!(
@@ -1455,6 +1496,9 @@ impl State {
             .get_swap(rwtxn, swap_id)?
             .ok_or_else(|| Error::SwapNotFound { swap_id: *swap_id })?;
 
+        // Save the old l1_txid BEFORE updating the swap (needed for index deletion)
+        let old_l1_txid = swap.l1_txid.clone();
+
         // Update L1 txid and claimer address (for open swaps)
         if let Some(claimer_addr) = l1_claimer_address {
             swap.update_l1_transaction(l1_txid.clone(), claimer_addr);
@@ -1472,8 +1516,8 @@ impl State {
             );
         }
 
-        // Update indexes
-        let old_l1_txid_key = (swap.parent_chain, swap.l1_txid.clone());
+        // Update indexes - use the old_l1_txid we saved before updating
+        let old_l1_txid_key = (swap.parent_chain, old_l1_txid);
         self.swaps_by_l1_txid
             .delete(rwtxn, &old_l1_txid_key)
             .map_err(DbError::from)?;

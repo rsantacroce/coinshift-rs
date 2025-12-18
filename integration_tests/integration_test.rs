@@ -8,6 +8,7 @@ use bitcoin::hashes::Hash;
 use coinshift::types::ParentChainType;
 use coinshift_app_rpc_api::RpcClient as _;
 use futures::{FutureExt, future::BoxFuture, StreamExt as _, channel::mpsc};
+use serde_json;
 use tokio::time::sleep;
 use tracing::Instrument as _;
 
@@ -718,10 +719,18 @@ async fn fill_swap_test_task(
     tracing::info!("=== FILLING SWAP ===");
     tracing::info!("Sending {} sats to {} on Signet", L1_AMOUNT_SATS, l1_recipient_address);
     
+    // Note: We don't check balance upfront - the transaction will fail with a clear error
+    // if there are insufficient funds. The enforcer should be funded during test setup.
+    
     // Send L1 transaction to fill the swap
-    let l1_txid_str = {
+    // Try sendtoaddress first, and if it fails with fee estimation error, 
+    // use walletcreatefundedpsbt with explicit fee_rate as fallback
+    // If insufficient funds, mine blocks to fund the wallet
+    let l1_txid_str = loop {
         let enforcer_guard = shared_setup.enforcer.lock().await;
-        enforcer_guard
+        
+        // First, try the simple sendtoaddress approach
+        let result = enforcer_guard
             .bitcoin_cli
             .command::<String, _, String, _, _>(
                 [],
@@ -729,7 +738,204 @@ async fn fill_swap_test_task(
                 [l1_recipient_address.clone(), L1_AMOUNT_SATS.to_string()],
             )
             .run_utf8()
-            .await?
+            .await;
+        
+        match result {
+            Ok(txid) => break txid,
+            Err(e) => {
+                let err_str = format!("{}", e);
+                // If it's an insufficient funds error, mine blocks to fund the wallet
+                if err_str.contains("Insufficient funds") {
+                    drop(enforcer_guard); // Release lock before mining
+                    
+                    tracing::info!("Enforcer has insufficient funds, attempting to fund by mining signet blocks...");
+                    
+                    // Mine blocks to fund the wallet
+                    // On signet, each block gives ~0.00003125 BTC, so we need several blocks
+                    use bip300301_enforcer_integration_tests::mine::mine;
+                    let mut enforcer_guard_mut = shared_setup.enforcer.lock().await;
+                    let required_btc = (L1_AMOUNT_SATS as f64 / 100_000_000.0) + 0.0001;
+                    let blocks_to_mine = ((required_btc / 0.00003125).ceil() as u32).max(5); // At least 5 blocks
+                    tracing::info!("Mining {} signet blocks to fund enforcer wallet...", blocks_to_mine);
+                    for i in 0..blocks_to_mine {
+                        mine::<PostSetup>(&mut *enforcer_guard_mut, 1, Some(true)).await?;
+                        tracing::debug!("Mined funding block {}", i + 1);
+                    }
+                    drop(enforcer_guard_mut);
+                    
+                    // Wait for wallet to update
+                    sleep(std::time::Duration::from_secs(1)).await;
+                    
+                    // Continue loop to retry sendtoaddress
+                    continue;
+                }
+                // If it's a fee estimation error, use PSBT approach with explicit fees
+                if err_str.contains("Fee estimation failed") || err_str.contains("fallbackfee") {
+                    tracing::debug!("Fee estimation failed, using PSBT with explicit fee_rate");
+                    // Use walletcreatefundedpsbt with explicit fee_rate
+                    let amount_btc = L1_AMOUNT_SATS as f64 / 100_000_000.0;
+                    let outputs_json = format!(r#"[{{"{}": {}}}]"#, l1_recipient_address, amount_btc);
+                    let options_json = r#"{"fee_rate": 1}"#; // 1 sat/vB
+                    // Store these for potential retry after funding
+                    let outputs_json_clone = outputs_json.clone();
+                    let psbt_result = enforcer_guard
+                        .bitcoin_cli
+                        .command::<String, _, String, _, _>(
+                            [],
+                            "walletcreatefundedpsbt",
+                            [
+                                "[]".to_string(),
+                                outputs_json,
+                                "0".to_string(),
+                                options_json.to_string(),
+                                "false".to_string(),
+                            ],
+                        )
+                        .run_utf8()
+                        .await;
+                    
+                    let psbt = match psbt_result {
+                        Ok(p) => p,
+                        Err(psbt_err) => {
+                            let psbt_err_str = format!("{}", psbt_err);
+                            if psbt_err_str.contains("Insufficient funds") {
+                                drop(enforcer_guard); // Release lock before mining
+                                
+                                // Try to fund the wallet by mining blocks
+                                tracing::info!("Enforcer has insufficient funds in PSBT creation, attempting to fund by mining signet blocks...");
+                                
+                                // Mine blocks to fund the wallet
+                                use bip300301_enforcer_integration_tests::mine::mine;
+                                let mut enforcer_guard_mut = shared_setup.enforcer.lock().await;
+                                let required_btc = (L1_AMOUNT_SATS as f64 / 100_000_000.0) + 0.0001;
+                                let blocks_to_mine = ((required_btc / 0.00003125).ceil() as u32).max(5); // At least 5 blocks
+                                tracing::info!("Mining {} signet blocks to fund enforcer wallet...", blocks_to_mine);
+                                for i in 0..blocks_to_mine {
+                                    mine::<PostSetup>(&mut *enforcer_guard_mut, 1, Some(true)).await?;
+                                    tracing::debug!("Mined funding block {}", i + 1);
+                                }
+                                drop(enforcer_guard_mut);
+                                
+                                // Wait for wallet to update
+                                sleep(std::time::Duration::from_secs(1)).await;
+                                
+                                // Retry the PSBT creation
+                                let enforcer_guard_retry = shared_setup.enforcer.lock().await;
+                                let balance_str = enforcer_guard_retry
+                                    .bitcoin_cli
+                                    .command::<String, _, String, _, _>([], "getbalance", [])
+                                    .run_utf8()
+                                    .await
+                                    .unwrap_or_else(|_| "0".to_string());
+                                tracing::info!("Enforcer balance after mining: {} BTC", balance_str.trim());
+                                
+                                // Try PSBT creation again after funding
+                                let psbt_retry = enforcer_guard_retry
+                                    .bitcoin_cli
+                                    .command::<String, _, String, _, _>(
+                                        [],
+                                        "walletcreatefundedpsbt",
+                                        [
+                                            "[]".to_string(),
+                                            outputs_json_clone,
+                                            "0".to_string(),
+                                            options_json.to_string(),
+                                            "false".to_string(),
+                                        ],
+                                    )
+                                    .run_utf8()
+                                    .await?;
+                                
+                                // Process the PSBT and send transaction
+                                let psbt_json: serde_json::Value = serde_json::from_str(psbt_retry.trim())?;
+                                let psbt_str = psbt_json["psbt"].as_str().ok_or_else(|| anyhow::anyhow!("PSBT not found"))?;
+                                
+                                let signed_psbt = enforcer_guard_retry
+                                    .bitcoin_cli
+                                    .command::<String, _, String, _, _>(
+                                        [],
+                                        "walletprocesspsbt",
+                                        [psbt_str.to_string()],
+                                    )
+                                    .run_utf8()
+                                    .await?;
+                                
+                                let signed_psbt_json: serde_json::Value = serde_json::from_str(signed_psbt.trim())?;
+                                let final_psbt = signed_psbt_json["psbt"].as_str().ok_or_else(|| anyhow::anyhow!("PSBT not found"))?;
+                                
+                                let final_tx = enforcer_guard_retry
+                                    .bitcoin_cli
+                                    .command::<String, _, String, _, _>(
+                                        [],
+                                        "finalizepsbt",
+                                        [final_psbt.to_string()],
+                                    )
+                                    .run_utf8()
+                                    .await?;
+                                
+                                let final_tx_json: serde_json::Value = serde_json::from_str(final_tx.trim())?;
+                                let hex_tx = final_tx_json["hex"].as_str().ok_or_else(|| anyhow::anyhow!("Transaction hex not found"))?;
+                                
+                                // Send the transaction and break with the txid
+                                break enforcer_guard_retry
+                                    .bitcoin_cli
+                                    .command::<String, _, String, _, _>(
+                                        [],
+                                        "sendrawtransaction",
+                                        [hex_tx.to_string()],
+                                    )
+                                    .run_utf8()
+                                    .await?;
+                            }
+                            return Err(psbt_err.into());
+                        }
+                    };
+                    
+                    let psbt_json: serde_json::Value = serde_json::from_str(psbt.trim())?;
+                    let psbt_str = psbt_json["psbt"].as_str().ok_or_else(|| anyhow::anyhow!("PSBT not found"))?;
+                    
+                    let signed_psbt = enforcer_guard
+                        .bitcoin_cli
+                        .command::<String, _, String, _, _>(
+                            [],
+                            "walletprocesspsbt",
+                            [psbt_str.to_string()],
+                        )
+                        .run_utf8()
+                        .await?;
+                    
+                    let signed_psbt_json: serde_json::Value = serde_json::from_str(signed_psbt.trim())?;
+                    let final_psbt = signed_psbt_json["psbt"].as_str().ok_or_else(|| anyhow::anyhow!("PSBT not found"))?;
+                    
+                    let final_tx = enforcer_guard
+                        .bitcoin_cli
+                        .command::<String, _, String, _, _>(
+                            [],
+                            "finalizepsbt",
+                            [final_psbt.to_string()],
+                        )
+                        .run_utf8()
+                        .await?;
+                    
+                    let final_tx_json: serde_json::Value = serde_json::from_str(final_tx.trim())?;
+                    let hex_tx = final_tx_json["hex"].as_str().ok_or_else(|| anyhow::anyhow!("Transaction hex not found"))?;
+                    
+                    // Send the transaction and break with the txid
+                    break enforcer_guard
+                        .bitcoin_cli
+                        .command::<String, _, String, _, _>(
+                            [],
+                            "sendrawtransaction",
+                            [hex_tx.to_string()],
+                        )
+                        .run_utf8()
+                        .await?;
+                } else {
+                    // For other errors, return the original error
+                    return Err(e.into());
+                }
+            }
+        }
     };
     let l1_txid: bitcoin::Txid = l1_txid_str.trim().parse()?;
     tracing::info!("✓ L1 transaction sent (Signet TXID): {}", l1_txid);
