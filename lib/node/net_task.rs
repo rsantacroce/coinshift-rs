@@ -1037,6 +1037,29 @@ impl NetTask {
                     }
                 }
                 MailboxItem::NewTipReady(new_tip, _addr, resp_tx) => {
+                    // Use a guard to ensure we always send a response on the oneshot, even if there's a panic
+                    // This prevents "Receive reorg result cancelled" errors
+                    struct OneshotGuard {
+                        resp_tx: Option<oneshot::Sender<bool>>,
+                        sent: bool,
+                    }
+                    impl OneshotGuard {
+                        fn new(resp_tx: Option<oneshot::Sender<bool>>) -> Self {
+                            Self { resp_tx, sent: false }
+                        }
+                    }
+                    impl Drop for OneshotGuard {
+                        fn drop(&mut self) {
+                            // If we haven't sent a response yet, send false to indicate failure
+                            if !self.sent {
+                                if let Some(resp_tx) = self.resp_tx.take() {
+                                    let _ = resp_tx.send(false);
+                                }
+                            }
+                        }
+                    }
+                    let mut guard = OneshotGuard::new(resp_tx);
+                    
                     let reorg_result = task::block_in_place(|| {
                         reorg_to_tip(
                             &self.ctxt.env,
@@ -1057,15 +1080,16 @@ impl NetTask {
                                 ?new_tip,
                                 "Failed to reorg to tip: {err:#}"
                             );
-                            // If there's a oneshot sender, respond with false to indicate
-                            // the reorg didn't happen
-                            if let Some(resp_tx) = resp_tx {
+                            // Send false to indicate the reorg didn't happen
+                            if let Some(resp_tx) = guard.resp_tx.take() {
                                 let _ = resp_tx.send(false);
+                                guard.sent = true;
                             }
                             continue;
                         }
                     };
-                    if let Some(resp_tx) = resp_tx {
+                    // Send the result
+                    if let Some(resp_tx) = guard.resp_tx.take() {
                         // If the receiver was dropped (e.g., caller timed out), just log and continue
                         // Don't crash the net task - this allows it to continue processing other messages
                         if resp_tx.send(reorg_applied).is_err() {
@@ -1073,6 +1097,8 @@ impl NetTask {
                                 ?new_tip,
                                 "Oneshot receiver dropped while sending reorg result (caller may have timed out)"
                             );
+                        } else {
+                            guard.sent = true;
                         }
                     }
                 }
@@ -1332,12 +1358,31 @@ impl NetTaskHandle {
                         );
                         return Err(Error::SendNewTipReady(err));
                     } else {
-                        // Task is still running but receiver is gone - this shouldn't happen
-                        // but might occur during a reorg. Log a warning.
+                        // Task is still running but receiver is gone - this might be a transient issue
+                        // or the receiver was dropped for some reason. Wait a bit and check if task
+                        // finishes, or if it's a transient channel issue.
                         tracing::warn!(
                             ?new_tip,
                             "Net task receiver is gone but task is still running - \
-                             this may indicate a reorg in progress or channel closure"
+                             waiting briefly to see if task finishes or channel recovers"
+                        );
+                        // Wait a short time to see if the task finishes or if it's a transient issue
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        let task_finished_after_wait = self.task.is_finished();
+                        if task_finished_after_wait {
+                            tracing::error!(
+                                ?new_tip,
+                                "Net task finished after wait - channel receiver was gone"
+                            );
+                            return Err(Error::SendNewTipReady(err));
+                        }
+                        // Task is still running - this is unexpected. The receiver should only
+                        // be dropped when the task finishes. Return error but log it as a warning
+                        // since the task is still running, it might recover.
+                        tracing::warn!(
+                            ?new_tip,
+                            "Net task receiver is still gone but task continues running - \
+                             this may indicate a channel closure issue. Returning error but task may recover."
                         );
                     }
                 } else if err.is_full() {

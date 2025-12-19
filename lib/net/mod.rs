@@ -294,7 +294,8 @@ impl Net {
             let peer_info_tx = self.peer_info_tx.clone();
             async move {
                 if let Err(_send_err) = info_rx.forward(peer_info_tx).await {
-                    tracing::error!(%addr, "Failed to send peer connection info");
+                    // Channel closed, which is normal when the connection fails or is closed
+                    tracing::debug!(%addr, "Peer connection info channel closed (connection may have failed)");
                 }
             }
         });
@@ -395,7 +396,8 @@ impl Net {
         };
         tracing::info!(peer_count = known_peers.len(), "Net::new: Connecting to known peers");
         let connection_start = std::time::Instant::now();
-        let () = known_peers.into_iter().try_for_each(|(peer_addr, _)| {
+        // Attempt to connect to all known peers, but don't fail if some connections fail
+        for (peer_addr, _) in known_peers {
             tracing::debug!(
                 peer_addr = %peer_addr,
                 "Net::new: Attempting to connect to known peer"
@@ -403,7 +405,6 @@ impl Net {
             match net.connect_peer(env.clone(), peer_addr) {
                 Ok(()) => {
                     tracing::debug!(peer_addr = %peer_addr, "Net::new: Successfully initiated connection to peer");
-                    Ok(())
                 },
                 Err(Error::Connect(
                     quinn::ConnectError::InvalidRemoteAddress(addr),
@@ -418,25 +419,16 @@ impl Net {
                         %addr,
                         "Net::new: Removed known peer with invalid remote address"
                     );
-                    Ok(())
                 }
-                res => {
-                    if let Err(ref err) = res {
-                        tracing::debug!(
-                            peer_addr = %peer_addr,
-                            error = %err,
-                            "Net::new: Connection attempt result"
-                        );
-                    }
-                    res
+                Err(err) => {
+                    tracing::debug!(
+                        peer_addr = %peer_addr,
+                        error = %err,
+                        "Net::new: Failed to connect to peer (will continue with other peers)"
+                    );
                 }
             }
-        })
-        // TODO: would be better to indicate this in the return error? tbh I want to scrap
-        // the typed error out of here, and just use anyhow
-        .inspect_err(|err| {
-            tracing::error!("unable to connect to known peers during net construction: {err:#}");
-        })?;
+        }
         let connection_elapsed = connection_start.elapsed();
         tracing::info!(
             elapsed_secs = connection_elapsed.as_secs_f64(),
@@ -513,7 +505,8 @@ impl Net {
             let peer_info_tx = self.peer_info_tx.clone();
             async move {
                 if let Err(_send_err) = info_rx.forward(peer_info_tx).await {
-                    tracing::error!(%addr, "Failed to send peer connection info");
+                    // Channel closed, which is normal when the connection fails or is closed
+                    tracing::debug!(%addr, "Peer connection info channel closed (connection may have failed)");
                 }
             }
         });
