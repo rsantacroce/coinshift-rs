@@ -56,26 +56,27 @@ harness = false
 test = false
 crate-type = ["bin"]
 
-[[bin]]
-name = "test_swap_serialization"
-path = "test_swap_serialization.rs"
-
-[[bin]]
-name = "test_swap_minimal"
-path = "test_swap_minimal.rs"
-
-[[bin]]
-name = "test_swap_field_by_field"
-path = "test_swap_field_by_field.rs"
-
-[[bin]]
-name = "test_swap_l1_amount"
-path = "test_swap_l1_amount.rs"
-
-[[bin]]
-name = "test_swap_invalid_tag_encoding"
-path = "test_swap_invalid_tag_encoding.rs"
-
-[[bin]]
-name = "test_swap_database"
-path = "test_swap_database.rs"
+# Commented out - these binary targets reference files that don't exist
+# [[bin]]
+# name = "test_swap_serialization"
+# path = "test_swap_serialization.rs"
+#
+# [[bin]]
+# name = "test_swap_minimal"
+# path = "test_swap_minimal.rs"
+#
+# [[bin]]
+# name = "test_swap_field_by_field"
+# path = "test_swap_field_by_field.rs"
+#
+# [[bin]]
+# name = "test_swap_l1_amount"
+# path = "test_swap_l1_amount.rs"
+#
+# [[bin]]
+# name = "test_swap_invalid_tag_encoding"
+# path = "test_swap_invalid_tag_encoding.rs"
+#
+# [[bin]]
+# name = "test_swap_database"
+# path = "test_swap_database.rs"

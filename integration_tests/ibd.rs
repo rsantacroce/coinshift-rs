@@ -42,24 +42,24 @@ async fn setup(
     .await?;
     let sidechain_sender = PostSetup::setup(
         Init {
-            coinshift_app: bin_paths.coinshift.clone(),
+            coinshift_app: bin_paths.coinshift_app.clone(),
             data_dir_suffix: Some("sender".to_owned()),
         },
         &enforcer_post_setup,
         res_tx.clone(),
     )
     .await?;
-    tracing::info!("Setup coinshift send node successfully");
+    tracing::info!("Setup Coinshift send node successfully");
     let sidechain_syncer = PostSetup::setup(
         Init {
-            coinshift_app: bin_paths.coinshift.clone(),
+            coinshift_app: bin_paths.coinshift_app.clone(),
             data_dir_suffix: Some("syncer".to_owned()),
         },
         &enforcer_post_setup,
         res_tx,
     )
     .await?;
-    tracing::info!("Setup coinshift sync node successfully");
+    tracing::info!("Setup Coinshift sync node successfully");
     let coinshift_nodes = CoinshiftNodes {
         sender: sidechain_sender,
         syncer: sidechain_syncer,
@@ -85,7 +85,6 @@ async fn check_peer_connection(
         .iter()
         .map(|p| p.address)
         .collect::<Vec<_>>();
-
     if peers.contains(&expected_peer) {
         Ok(())
     } else {
@@ -192,3 +191,4 @@ pub fn ibd_trial(
 ) -> AsyncTrial<BoxFuture<'static, anyhow::Result<()>>> {
     AsyncTrial::new("initial_block_download", ibd(bin_paths).boxed())
 }
+

@@ -483,7 +483,7 @@ fn connect_event(
     latest_withdrawal_bundle_event_block_hash: &mut Option<bitcoin::BlockHash>,
     event_block_hash: bitcoin::BlockHash,
     event: &BlockEvent,
-    wallet: Option<&Wallet>,
+    _wallet: Option<&Wallet>,
 ) -> Result<(), Error> {
     match event {
         BlockEvent::Deposit(deposit) => {
@@ -493,28 +493,6 @@ fn connect_event(
             // Extract value and address for logging
             let value = output.content.get_value();
             let address = output.address;
-            
-            // Check if the address belongs to our wallet
-            let address_belongs_to_wallet = if let Some(wallet) = wallet {
-                wallet.has_address(&address).unwrap_or(false)
-            } else {
-                // If no wallet is provided, we can't verify, so skip the check
-                // This allows the code to work in contexts where wallet isn't available
-                true
-            };
-            
-            if !address_belongs_to_wallet {
-                tracing::warn!(
-                    %block_height,
-                    %event_block_hash,
-                    outpoint = %outpoint,
-                    address = %address,
-                    amount_btc = %value.to_string_in(bitcoin::Denomination::Bitcoin),
-                    amount_sats = %value.to_sat(),
-                    "Deposit from parent chain received but address does not belong to wallet, skipping"
-                );
-                return Ok(());
-            }
             
             tracing::info!(
                 %block_height,

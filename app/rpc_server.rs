@@ -303,6 +303,33 @@ impl RpcServer for RpcServerImpl {
     ) -> RpcResult<(SwapId, Txid)> {
         let accumulator =
             self.app.node.get_tip_accumulator().map_err(custom_err)?;
+        
+        // Create a closure that checks if an outpoint is locked to a swap
+        // We create a new read transaction each time to avoid lifetime issues
+        // This ensures we always read the latest state
+        let node = &self.app.node;
+        let is_locked = |outpoint: &coinshift::types::OutPoint| -> bool {
+            let rotxn = match node.env().read_txn() {
+                Ok(txn) => txn,
+                Err(_) => {
+                    tracing::warn!("Failed to create read transaction for locked output check");
+                    return false;
+                }
+            };
+            let state = node.state();
+            match state.is_output_locked_to_swap(&rotxn, outpoint) {
+                Ok(Some(_)) => {
+                    tracing::debug!(outpoint = ?outpoint, "Output is locked to a swap");
+                    true
+                }
+                Ok(None) => false,
+                Err(err) => {
+                    tracing::warn!(outpoint = ?outpoint, error = %err, "Error checking if output is locked");
+                    false
+                }
+            }
+        };
+        
         let (tx, swap_id) = self
             .app
             .wallet
@@ -315,6 +342,7 @@ impl RpcServer for RpcServerImpl {
                 Amount::from_sat(l2_amount_sats),
                 required_confirmations,
                 Amount::from_sat(fee_sats),
+                is_locked,
             )
             .map_err(custom_err)?;
         let txid = tx.txid();

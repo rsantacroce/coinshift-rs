@@ -4,7 +4,7 @@ use tracing_subscriber::{filter as tracing_filter, layer::SubscriberExt};
 mod ibd;
 mod integration_test;
 mod setup;
-mod setup_test;
+mod swap_creation;
 mod unknown_withdrawal;
 mod util;
 
@@ -83,7 +83,8 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     let () = set_tracing_subscriber(tracing::Level::DEBUG)?;
     let rt_handle = tokio::runtime::Handle::current();
     // Read env vars
-    if let Some(env_filepath) = std::env::var_os("COINSHIFT_INTEGRATION_TEST_ENV")
+    if let Some(env_filepath) =
+        std::env::var_os("COINSHIFT_INTEGRATION_TEST_ENV")
     {
         let env_filepath: &std::path::Path = env_filepath.as_ref();
         tracing::info!("Adding env vars from `{}`", env_filepath.display());
@@ -97,7 +98,8 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
             .into_iter()
             .map(|trial| trial.run_blocking(rt_handle.clone())),
     );
-    // Run all tests and exit the application appropriatly.
+    // Run all tests and exit the application appropriately.
     let exit_code = libtest_mimic::run(&args.test_args, tests).exit_code();
     Ok(exit_code)
 }
+

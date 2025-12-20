@@ -164,6 +164,21 @@ impl CreateSwap {
             let l1_amount_val = l1_amount.expect("should not happen");
             let l2_amount_val = l2_amount.expect("should not happen");
 
+            // Create a closure that checks if an outpoint is locked to a swap
+            // We create a new read transaction each time to avoid lifetime issues
+            let node = &app.node;
+            let is_locked = |outpoint: &coinshift::types::OutPoint| -> bool {
+                let rotxn = match node.env().read_txn() {
+                    Ok(txn) => txn,
+                    Err(_) => return false,
+                };
+                let state = node.state();
+                state
+                    .is_output_locked_to_swap(&rotxn, outpoint)
+                    .map(|opt| opt.is_some())
+                    .unwrap_or(false)
+            };
+
             let (tx, swap_id) = match app.wallet.create_swap_create_tx(
                 &accumulator,
                 self.parent_chain,
@@ -173,6 +188,7 @@ impl CreateSwap {
                 l2_amount_val,
                 required_confirmations,
                 bitcoin::Amount::ZERO,
+                is_locked,
             ) {
                 Ok(result) => {
                     let txid = result.0.txid();
