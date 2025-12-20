@@ -387,12 +387,37 @@ impl RpcServer for RpcServerImpl {
             .env()
             .write_txn()
             .map_err(custom_err)?;
+        
+        // Get current sidechain block hash and height for reference
+        let block_hash = self
+            .app
+            .node
+            .state()
+            .try_get_tip(&rwtxn)
+            .map_err(custom_err)?
+            .ok_or_else(|| custom_err_msg("No tip found"))?;
+        let block_height = self
+            .app
+            .node
+            .state()
+            .try_get_height(&rwtxn)
+            .map_err(custom_err)?
+            .ok_or_else(|| custom_err_msg("No tip height found"))?;
+        
         // TODO: Extract claimer address from L1 transaction
         // For now, pass None (will be set when L1 transaction detection is implemented)
         self.app
             .node
             .state()
-            .update_swap_l1_txid(&mut rwtxn, &swap_id, l1_txid, confirmations, None)
+            .update_swap_l1_txid(
+                &mut rwtxn,
+                &swap_id,
+                l1_txid,
+                confirmations,
+                None,
+                block_hash,
+                block_height,
+            )
             .map_err(custom_err)?;
         rwtxn.commit().map_err(custom_err)?;
         Ok(())

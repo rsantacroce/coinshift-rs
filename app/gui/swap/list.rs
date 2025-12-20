@@ -785,12 +785,38 @@ impl SwapList {
             }
         };
 
+        // Get current sidechain block hash and height for reference
+        let block_hash = match app.node.state().try_get_tip(&rwtxn) {
+            Ok(Some(hash)) => hash,
+            Ok(None) => {
+                tracing::error!("No tip found");
+                return;
+            }
+            Err(err) => {
+                tracing::error!("Failed to get tip: {err:#}");
+                return;
+            }
+        };
+        let block_height = match app.node.state().try_get_height(&rwtxn) {
+            Ok(Some(height)) => height,
+            Ok(None) => {
+                tracing::error!("No tip height found");
+                return;
+            }
+            Err(err) => {
+                tracing::error!("Failed to get height: {err:#}");
+                return;
+            }
+        };
+
         if let Err(err) = app.node.state().update_swap_l1_txid(
             &mut rwtxn,
             &swap.id,
             l1_txid,
             confirmations,
             l1_claimer_address,
+            block_hash,
+            block_height,
         ) {
             tracing::error!("Failed to update swap: {err:#}");
             return;
