@@ -6,7 +6,10 @@ use futures::{FutureExt, future::BoxFuture};
 
 use crate::{
     setup::{Init, PostSetup},
-    swap_creation::{swap_creation_fixed_trial, swap_creation_open_trial},
+    swap_creation::{
+        swap_creation_fixed_trial, swap_creation_open_fill_trial,
+        swap_creation_open_trial,
+    },
     util::BinPaths,
 };
 
@@ -33,6 +36,7 @@ pub fn tests(
         // ibd_trial(bin_paths.clone()),
         swap_creation_fixed_trial(bin_paths.clone()),
         swap_creation_open_trial(bin_paths.clone()),
+        swap_creation_open_fill_trial(bin_paths.clone()),
         // unknown_withdrawal_trial(bin_paths),
     ]
 }

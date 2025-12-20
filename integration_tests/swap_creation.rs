@@ -168,12 +168,39 @@ async fn verify_swap_locks_utxos(
     Ok(())
 }
 
+/// Wait (with retries) for UTXOs to be locked for the swap
+async fn wait_for_locked_utxos(
+    rpc_client: &jsonrpsee::http_client::HttpClient,
+    swap_id: SwapId,
+    expected_locked_amount: u64,
+) -> anyhow::Result<()> {
+    const MAX_RETRIES: usize = 10;
+    const RETRY_DELAY_MS: u64 = 200;
+
+    for attempt in 0..MAX_RETRIES {
+        let res =
+            verify_swap_locks_utxos(rpc_client, swap_id, expected_locked_amount).await;
+        if res.is_ok() {
+            return Ok(());
+        }
+        tracing::debug!(
+            attempt,
+            swap_id = %swap_id,
+            "Locked UTXOs not yet visible, retrying..."
+        );
+        sleep(std::time::Duration::from_millis(RETRY_DELAY_MS)).await;
+    }
+
+    // Final attempt, propagate error
+    verify_swap_locks_utxos(rpc_client, swap_id, expected_locked_amount).await
+}
+
 async fn setup_swapper(
     bin_paths: &BinPaths,
     res_tx: mpsc::UnboundedSender<anyhow::Result<()>>,
     data_dir_suffix: &str,
 ) -> anyhow::Result<(PostSetup, EnforcerPostSetup)> {
-    let mut enforcer_post_setup = setup(bin_paths, res_tx.clone()).await?;
+    let enforcer_post_setup = setup(bin_paths, res_tx.clone()).await?;
 
     let sidechain = PostSetup::setup(
         Init {
@@ -194,7 +221,7 @@ async fn setup_swapper(
 
 async fn cleanup_swapper(
     sidechain: PostSetup,
-    mut enforcer_post_setup: EnforcerPostSetup,
+    enforcer_post_setup: EnforcerPostSetup,
 ) -> anyhow::Result<()> {
     drop(sidechain);
     tracing::info!("Removing {}", enforcer_post_setup.out_dir.path().display());
@@ -381,6 +408,153 @@ async fn swap_creation_open_task(
     cleanup_swapper(sidechain, enforcer_post_setup).await
 }
 
+async fn swap_creation_open_fill_task(
+    bin_paths: BinPaths,
+    res_tx: mpsc::UnboundedSender<anyhow::Result<()>>,
+) -> anyhow::Result<()> {
+    let (mut sidechain, mut enforcer_post_setup) =
+        setup_swapper(&bin_paths, res_tx.clone(), "swapper-open-fill").await?;
+
+    // Fund the wallet
+    let deposit_address = sidechain.get_deposit_address().await?;
+    deposit(
+        &mut enforcer_post_setup,
+        &mut sidechain,
+        &deposit_address,
+        DEPOSIT_AMOUNT,
+        DEPOSIT_FEE,
+    )
+    .await?;
+    tracing::info!("Deposited to sidechain successfully");
+
+    let l1_recipient_address = "bcrt1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh";
+
+    // Create an open swap (without l2_recipient)
+    tracing::info!("Creating open swap to later fill");
+    let (swap_id, swap_txid) = sidechain
+        .rpc_client
+        .create_swap(
+            ParentChainType::Regtest,
+            l1_recipient_address.to_string(),
+            SWAP_L1_AMOUNT,
+            None, // open swap
+            SWAP_L2_AMOUNT,
+            Some(1),
+            SWAP_FEE,
+        )
+        .await?;
+    tracing::info!(
+        swap_id = %swap_id,
+        swap_txid = %swap_txid,
+        "Created open swap transaction"
+    );
+
+    // Include the swap create tx in a block
+    wait_for_swap_in_block(
+        &mut sidechain,
+        &mut enforcer_post_setup,
+        swap_txid,
+        swap_id,
+    )
+    .await?;
+    sleep(std::time::Duration::from_millis(500)).await;
+
+    // Ensure it exists and is pending with locked UTXOs
+    verify_swap_created(
+        &sidechain.rpc_client,
+        swap_id,
+        SWAP_L2_AMOUNT,
+        SWAP_L1_AMOUNT,
+        None,
+    )
+    .await?;
+    wait_for_locked_utxos(&sidechain.rpc_client, swap_id, SWAP_L2_AMOUNT).await?;
+
+    // Simulate detecting the L1 tx: mark as confirmed so swap moves to ReadyToClaim
+    let fake_l1_txid_hex = "11".repeat(32);
+    sidechain
+        .rpc_client
+        .update_swap_l1_txid(swap_id, fake_l1_txid_hex.clone(), 1)
+        .await?;
+    // Allow wallet/state tasks to catch up
+    sleep(std::time::Duration::from_millis(500)).await;
+    wait_for_locked_utxos(&sidechain.rpc_client, swap_id, SWAP_L2_AMOUNT).await?;
+
+    let status_ready = sidechain
+        .rpc_client
+        .get_swap_status(swap_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Swap not found after L1 update"))?;
+    anyhow::ensure!(
+        matches!(status_ready.state, SwapState::ReadyToClaim),
+        "Swap not ReadyToClaim after L1 update: {:?}",
+        status_ready.state
+    );
+
+    // Claim the swap as a specific L2 address
+    let claimer_address = sidechain.rpc_client.get_new_address().await?;
+    let claim_txid = sidechain
+        .rpc_client
+        .claim_swap(swap_id, Some(claimer_address))
+        .await?;
+    tracing::info!(swap_id = %swap_id, claim_txid = %claim_txid, "Claimed swap");
+
+    // Mine the claim transaction into a block
+    sidechain.bmm_single(&mut enforcer_post_setup).await?;
+    sleep(std::time::Duration::from_millis(500)).await;
+
+    // Verify completion
+    // Wait until the swap is marked completed
+    const MAX_STATUS_RETRIES: usize = 10;
+    const STATUS_DELAY_MS: u64 = 200;
+    let mut completed = None;
+    for _ in 0..MAX_STATUS_RETRIES {
+        let status = sidechain.rpc_client.get_swap_status(swap_id).await?;
+        if let Some(s) = status {
+            if matches!(s.state, SwapState::Completed) {
+                completed = Some(s);
+                break;
+            }
+        }
+        sleep(std::time::Duration::from_millis(STATUS_DELAY_MS)).await;
+    }
+    let completed_swap = completed
+        .ok_or_else(|| anyhow::anyhow!("Swap not marked Completed after claim"))?;
+
+    // Locked outputs should be released
+    let utxos_after = sidechain.rpc_client.list_utxos().await?;
+    let still_locked = utxos_after.iter().any(|utxo| {
+        matches!(
+            utxo.output.content,
+            coinshift::types::OutputContent::SwapPending { swap_id: locked, .. }
+                if locked == swap_id.0
+        )
+    });
+    anyhow::ensure!(
+        !still_locked,
+        "Expected no locked outputs after swap completion"
+    );
+
+    // Final report
+    tracing::info!(
+        swap_id = %swap_id,
+        swap_create_txid = %swap_txid,
+        fake_l1_txid_hex = %fake_l1_txid_hex,
+        claim_txid = %claim_txid,
+        l1_recipient = l1_recipient_address,
+        l1_amount_sats = SWAP_L1_AMOUNT,
+        l2_amount_sats = SWAP_L2_AMOUNT,
+        claimer_address = %claimer_address,
+        final_state = ?completed_swap.state,
+        utxos_total = utxos_after.len(),
+        "Open swap fill report: swap completed and locks released"
+    );
+
+    tracing::info!("Open swap fill and claim test passed");
+
+    cleanup_swapper(sidechain, enforcer_post_setup).await
+}
+
 async fn swap_creation_fixed(bin_paths: BinPaths) -> anyhow::Result<()> {
     let (res_tx, mut res_rx) = mpsc::unbounded();
     let _test_task: AbortOnDrop<()> = tokio::task::spawn({
@@ -413,6 +587,22 @@ async fn swap_creation_open(bin_paths: BinPaths) -> anyhow::Result<()> {
     })?
 }
 
+async fn swap_creation_open_fill(bin_paths: BinPaths) -> anyhow::Result<()> {
+    let (res_tx, mut res_rx) = mpsc::unbounded();
+    let _test_task: AbortOnDrop<()> = tokio::task::spawn({
+        let res_tx = res_tx.clone();
+        async move {
+            let res = swap_creation_open_fill_task(bin_paths, res_tx.clone()).await;
+            let _send_err: Result<(), _> = res_tx.unbounded_send(res);
+        }
+        .in_current_span()
+    })
+    .into();
+    res_rx.next().await.ok_or_else(|| {
+        anyhow::anyhow!("Unexpected end of test task result stream")
+    })?
+}
+
 pub fn swap_creation_fixed_trial(
     bin_paths: BinPaths,
 ) -> AsyncTrial<BoxFuture<'static, anyhow::Result<()>>> {
@@ -423,5 +613,14 @@ pub fn swap_creation_open_trial(
     bin_paths: BinPaths,
 ) -> AsyncTrial<BoxFuture<'static, anyhow::Result<()>>> {
     AsyncTrial::new("swap_creation_open", swap_creation_open(bin_paths).boxed())
+}
+
+pub fn swap_creation_open_fill_trial(
+    bin_paths: BinPaths,
+) -> AsyncTrial<BoxFuture<'static, anyhow::Result<()>>> {
+    AsyncTrial::new(
+        "swap_creation_open_fill",
+        swap_creation_open_fill(bin_paths).boxed(),
+    )
 }
 
