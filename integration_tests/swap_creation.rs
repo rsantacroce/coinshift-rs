@@ -480,6 +480,11 @@ async fn swap_creation_open_fill_task(
     sleep(std::time::Duration::from_millis(500)).await;
     wait_for_locked_utxos(&sidechain.rpc_client, swap_id, SWAP_L2_AMOUNT).await?;
 
+    tracing::info!(
+        "Open swap state updated to ReadyToClaim after L1 TXID update. swap_id={}, fake_l1_txid={}",
+        swap_id,
+        fake_l1_txid_hex
+    );
     let status_ready = sidechain
         .rpc_client
         .get_swap_status(swap_id)
