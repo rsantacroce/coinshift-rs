@@ -550,7 +550,96 @@ impl SwapList {
 
         tracing::info!("Swap claimed: swap_id={}, txid={}", swap_id, txid);
         self.claimer_address_input.clear();
+        self.success_message = Some(format!("Swap claimed successfully! Transaction ID: {}", txid));
         self.refresh_swaps(app);
+    }
+    
+    fn search_swap_by_id(&mut self, app: &App) {
+        if self.swap_id_search.is_empty() {
+            self.searched_swap = None;
+            return;
+        }
+        
+        // Parse swap ID from hex string (SwapId displays as hex)
+        let swap_id = match hex::decode(&self.swap_id_search.trim()) {
+            Ok(bytes) => {
+                if bytes.len() == 32 {
+                    let mut id_bytes = [0u8; 32];
+                    id_bytes.copy_from_slice(&bytes);
+                    SwapId(id_bytes)
+                } else {
+                    tracing::warn!("Swap ID must be 32 bytes (64 hex characters), got {} bytes", bytes.len());
+                    self.searched_swap = None;
+                    return;
+                }
+            }
+            Err(err) => {
+                tracing::warn!("Invalid swap ID hex format: {}", err);
+                self.searched_swap = None;
+                return;
+            }
+        };
+        
+        // Get swap from database
+        let rotxn = match app.node.env().read_txn() {
+            Ok(txn) => txn,
+            Err(err) => {
+                tracing::error!("Failed to get read transaction: {err:#}");
+                self.searched_swap = None;
+                return;
+            }
+        };
+        
+        match app.node.state().get_swap(&rotxn, &swap_id) {
+            Ok(Some(swap)) => {
+                tracing::info!("Found swap by ID: {}", swap_id);
+                self.searched_swap = Some(swap);
+            }
+            Ok(None) => {
+                tracing::warn!("Swap not found: {}", swap_id);
+                self.searched_swap = None;
+                // Also check mempool
+                if let Ok(mempool_txs) = app.node.get_all_transactions() {
+                    for tx in mempool_txs {
+                        if let coinshift::types::TxData::SwapCreate {
+                            swap_id: tx_swap_id,
+                            parent_chain,
+                            l1_txid_bytes: _,
+                            required_confirmations,
+                            l2_recipient,
+                            l2_amount,
+                            l1_recipient_address,
+                            l1_amount,
+                        } = &tx.transaction.data
+                        {
+                            if coinshift::types::SwapId(*tx_swap_id) == swap_id {
+                                let l1_txid = coinshift::types::SwapTxId::from_bytes(&vec![0u8; 32]);
+                                let swap = coinshift::types::Swap::new(
+                                    swap_id,
+                                    coinshift::types::SwapDirection::L2ToL1,
+                                    *parent_chain,
+                                    l1_txid,
+                                    Some(*required_confirmations),
+                                    *l2_recipient,
+                                    bitcoin::Amount::from_sat(*l2_amount),
+                                    l1_recipient_address.clone(),
+                                    l1_amount.map(bitcoin::Amount::from_sat),
+                                    0, // Height 0 for pending
+                                    None,
+                                );
+                                self.searched_swap = Some(swap);
+                                tracing::info!("Found swap in mempool: {}", swap_id);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::error!("Failed to get swap: {err:#}");
+                self.searched_swap = None;
+            }
+        }
     }
 
     fn load_rpc_config(&self, parent_chain: ParentChainType) -> Option<RpcConfig> {
