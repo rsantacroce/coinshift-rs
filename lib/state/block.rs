@@ -95,6 +95,35 @@ pub fn prevalidate(
             spent_utxos,
             transaction: transaction.clone(),
         };
+        
+        // Validate swap transactions during prevalidation
+        match &transaction.data {
+            crate::types::TxData::SwapCreate { .. } => {
+                crate::state::swap::validate_swap_create(
+                    state,
+                    rotxn,
+                    transaction,
+                    &filled_tx,
+                )?;
+            }
+            crate::types::TxData::SwapClaim { .. } => {
+                crate::state::swap::validate_swap_claim(
+                    state,
+                    rotxn,
+                    transaction,
+                    &filled_tx,
+                )?;
+            }
+            crate::types::TxData::Regular => {
+                // Validate that regular transactions don't spend locked outputs
+                crate::state::swap::validate_no_locked_outputs(
+                    state,
+                    rotxn,
+                    transaction,
+                )?;
+            }
+        }
+        
         total_fees = total_fees
             .checked_add(state.validate_filled_transaction(&filled_tx)?)
             .ok_or(AmountOverflowError)?;
@@ -164,6 +193,16 @@ pub fn prevalidate(
     let roots: Vec<BitcoinNodeHash> = accumulator.get_roots();
     if roots != header.roots {
         return Err(Error::UtreexoRootsMismatch);
+    }
+
+    // Process BMM swap reports if any (read-only check)
+    if !body.l1_transaction_reports.is_empty() {
+        // Verify signatures (read-only operation)
+        for report in &body.l1_transaction_reports {
+            report
+                .verify_signature()
+                .map_err(|e| Error::BmmReportError(format!("Invalid report signature: {}", e)))?;
+        }
     }
 
     Ok(PrevalidatedBlock {
@@ -268,20 +307,21 @@ pub fn connect_prevalidated(
                 // Reconstruct L1 txid
                 let l1_txid = SwapTxId::from_bytes(l1_txid_bytes);
 
-                // Check if swap already exists (might be from mempool or previous block)
-                // If it exists but is corrupted, delete it first to avoid issues
+                // Check if swap already exists - this should have been caught during validation
+                // but we check again here as a safety measure
                 match state.get_swap(rwtxn, &swap_id) {
                     Ok(Some(ref existing)) => {
-                        tracing::warn!(
-                            swap_id = %swap_id,
-                            existing_state = ?existing.state,
-                            "Swap already exists in database, will overwrite during block connection"
-                        );
+                        // Swap already exists - this is an error
+                        // Validation should have rejected this transaction
+                        return Err(Error::InvalidTransaction(format!(
+                            "Swap {} already exists (state: {:?}) - duplicate swap transaction rejected",
+                            swap_id, existing.state
+                        )));
                     }
                     Ok(None) => {
-                        // Swap doesn't exist, that's fine
+                        // Swap doesn't exist, that's fine - proceed to create it
                     }
-                    Err(_) => {
+                    Err(err) => {
                         // Swap exists but is corrupted - delete it first
                         tracing::warn!(
                             swap_id = %swap_id,

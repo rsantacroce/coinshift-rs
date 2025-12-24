@@ -151,7 +151,8 @@ where
                     State::NUM_DBS
                         + Archive::NUM_DBS
                         + MemPool::NUM_DBS
-                        + Net::NUM_DBS,
+                        + Net::NUM_DBS
+                        + 1, // Add 1 for safety margin
                 );
             // Apply LMDB "fast" flags consistent with our benchmark setup:
             // - WRITE_MAP lets us write directly into the memory map instead of

@@ -289,6 +289,8 @@ pub struct Swap {
     pub l1_txid_validated_at_block_hash: Option<BlockHash>,
     /// Sidechain block height where L1 txid was validated via parent chain RPC
     pub l1_txid_validated_at_height: Option<u32>,
+    /// Whether Merkle proof has been verified for the L1 transaction
+    pub merkle_proof_verified: Option<bool>,
 }
 
 // Custom Borsh serialization for Swap (needed for integration tests)
@@ -312,6 +314,7 @@ impl BorshSerialize for Swap {
         BorshSerialize::serialize(&self.expires_at_height, writer)?;
         BorshSerialize::serialize(&self.l1_txid_validated_at_block_hash, writer)?;
         BorshSerialize::serialize(&self.l1_txid_validated_at_height, writer)?;
+        BorshSerialize::serialize(&self.merkle_proof_verified, writer)?;
         Ok(())
     }
 }
@@ -337,6 +340,7 @@ impl BorshDeserialize for Swap {
             expires_at_height: BorshDeserialize::deserialize_reader(reader)?,
             l1_txid_validated_at_block_hash: BorshDeserialize::deserialize_reader(reader)?,
             l1_txid_validated_at_height: BorshDeserialize::deserialize_reader(reader)?,
+            merkle_proof_verified: BorshDeserialize::deserialize_reader(reader)?,
         })
     }
 }
@@ -373,6 +377,7 @@ impl Swap {
             expires_at_height,
             l1_txid_validated_at_block_hash: None,
             l1_txid_validated_at_height: None,
+            merkle_proof_verified: None,
         }
     }
 

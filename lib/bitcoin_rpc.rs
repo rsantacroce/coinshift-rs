@@ -83,7 +83,7 @@ impl BitcoinRpcClient {
         Self { config, client }
     }
 
-    fn call<T: for<'de> Deserialize<'de>>(
+    pub fn call<T: for<'de> Deserialize<'de>>(
         &self,
         method: &str,
         params: serde_json::Value,
@@ -337,6 +337,70 @@ impl BitcoinRpcClient {
         }
 
         Ok(matches)
+    }
+
+    /// Get Merkle proof for a transaction
+    /// Uses gettxoutproof RPC method
+    pub fn get_merkle_proof(
+        &self,
+        txid: &str,
+        block_hash: Option<&str>,
+    ) -> Result<crate::types::MerkleProof, Error> {
+        use bitcoin::{BlockHash, Txid};
+        use std::str::FromStr;
+
+        let mut params = serde_json::json!([vec![txid]]);
+        if let Some(block_hash) = block_hash {
+            params = serde_json::json!([vec![txid], block_hash]);
+        }
+
+        // gettxoutproof returns a hex-encoded proof
+        let proof_hex: String = self
+            .call("gettxoutproof", params)
+            .map_err(|e| Error::Rpc(format!("Failed to get Merkle proof: {}", e)))?;
+
+        // Parse block hash
+        let block_hash_parsed = if let Some(hash) = block_hash {
+            BlockHash::from_str(hash)
+                .map_err(|e| Error::Rpc(format!("Invalid block hash: {}", e)))?
+        } else {
+            // Try to get block hash from transaction
+            let tx = self.get_transaction(txid)?;
+            if let Some(height) = tx.blockheight {
+                // Get block hash from height
+                let hash_str = self
+                    .call::<String>("getblockhash", serde_json::json!([height]))
+                    .map_err(|e| Error::Rpc(format!("Failed to get block hash: {}", e)))?;
+                BlockHash::from_str(&hash_str)
+                    .map_err(|e| Error::Rpc(format!("Invalid block hash: {}", e)))?
+            } else {
+                return Err(Error::TransactionNotFound);
+            }
+        };
+
+        // Parse txid
+        let txid_parsed = Txid::from_str(txid)
+            .map_err(|e| Error::Rpc(format!("Invalid transaction ID: {}", e)))?;
+
+        // TODO: Parse the actual Merkle proof from proof_hex
+        // For now, return a placeholder structure
+        // In production, parse the MerkleBlock structure properly
+        // The proof_hex contains a serialized MerkleBlock which includes:
+        // - Block header
+        // - Transaction count
+        // - Merkle hashes (partial tree)
+        // - Flag bits (which nodes are in the tree)
+        // - Transaction hashes
+        
+        // Placeholder - will be fully implemented when MerkleBlock parsing is added
+        let _proof_hex = proof_hex;
+        
+        Ok(crate::types::MerkleProof {
+            txid: txid_parsed,
+            block_hash: block_hash_parsed,
+            merkle_path: Vec::new(), // TODO: Parse from proof_hex
+            tx_index: 0, // TODO: Parse from proof
+        })
     }
 }
 

@@ -20,6 +20,9 @@ use crate::{
 
 mod address;
 pub mod hashes;
+mod header_chain;
+mod l1_report;
+mod merkle;
 pub mod proto;
 pub mod schema;
 mod swap;
@@ -29,6 +32,9 @@ pub use address::Address;
 pub use hashes::{
     BlockHash, Hash, M6id, MerkleRoot, Txid, hash, hash_with_scratch_buffer,
 };
+pub use header_chain::{HeaderChain, HeaderChainError};
+pub use l1_report::{L1ReportError, L1TransactionReport};
+pub use merkle::{MerkleProof, MerkleProofError};
 pub use swap::{
     ParentChainType, Swap, SwapDirection, SwapError, SwapId, SwapState,
     SwapTxId,
@@ -631,11 +637,74 @@ pub enum ModifyMemForestError {
     Utreexo(#[from] UtreexoError),
 }
 
-#[derive(BorshSerialize, Clone, Debug, Deserialize, Serialize, ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Body {
     pub coinbase: Vec<Output>,
     pub transactions: Vec<Transaction>,
     pub authorizations: Vec<Authorization>,
+    /// L1 transaction reports from BMM participants
+    pub l1_transaction_reports: Vec<L1TransactionReport>,
+}
+
+// Manual BorshSerialize implementation to handle l1_transaction_reports
+// which uses serde instead of borsh
+impl BorshSerialize for Body {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        use borsh::BorshSerialize;
+        BorshSerialize::serialize(&self.coinbase, writer)?;
+        BorshSerialize::serialize(&self.transactions, writer)?;
+        BorshSerialize::serialize(&self.authorizations, writer)?;
+        // Serialize l1_transaction_reports using bincode (via serde)
+        // This is a workaround since L1TransactionReport uses serde
+        let reports_bytes = bincode::serialize(&self.l1_transaction_reports)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to serialize reports: {}", e)))?;
+        BorshSerialize::serialize(&reports_bytes, writer)?;
+        Ok(())
+    }
+}
+
+// Note: Body doesn't implement BorshDeserialize because Output, Transaction, and Authorization
+// don't implement BorshDeserialize. Body is stored in the database using SerdeBincode,
+// so BorshDeserialize is not needed.
+
+// Manual ToSchema implementation for Body
+impl utoipa::ToSchema for Body {
+    fn name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("Body")
+    }
+}
+
+impl utoipa::PartialSchema for Body {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::Schema> {
+        use utoipa::openapi::{Object, RefOr, Schema};
+        let mut obj = Object::new();
+        obj.properties.insert(
+            "coinbase".to_string(),
+            RefOr::T(Schema::Array(utoipa::openapi::Array::new(
+                RefOr::Ref(utoipa::openapi::Ref::from_schema_name("Output")),
+            ))),
+        );
+        obj.properties.insert(
+            "transactions".to_string(),
+            RefOr::T(Schema::Array(utoipa::openapi::Array::new(
+                RefOr::Ref(utoipa::openapi::Ref::from_schema_name("Transaction")),
+            ))),
+        );
+        obj.properties.insert(
+            "authorizations".to_string(),
+            RefOr::T(Schema::Array(utoipa::openapi::Array::new(
+                RefOr::Ref(utoipa::openapi::Ref::from_schema_name("Authorization")),
+            ))),
+        );
+        // l1_transaction_reports - use a simple object schema as placeholder
+        obj.properties.insert(
+            "l1_transaction_reports".to_string(),
+            RefOr::T(Schema::Array(utoipa::openapi::Array::new(
+                RefOr::T(Schema::Object(Object::new())),
+            ))),
+        );
+        RefOr::T(Schema::Object(obj))
+    }
 }
 
 impl Body {
@@ -659,6 +728,7 @@ impl Body {
             coinbase,
             transactions,
             authorizations,
+            l1_transaction_reports: Vec::new(),
         }
     }
 

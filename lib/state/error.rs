@@ -111,4 +111,8 @@ pub enum Error {
     },
     #[error("L1 transaction validation failed: {0}")]
     L1TransactionValidationFailed(String),
+    #[error("Header chain error: {0}")]
+    HeaderChainError(String),
+    #[error("BMM report error: {0}")]
+    BmmReportError(String),
 }

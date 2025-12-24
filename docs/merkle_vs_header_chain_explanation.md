@@ -70,10 +70,11 @@ Together, they provide:
 
 ### Your Idea: Use BMM Participants for Validation
 
-Since BMM (Build Merge Mining) participants (Alice, Bob, Charles) are already:
+Since BMM (Build Merge Mining) participants are already:
 - Validating mainchain blocks
 - Have access to mainchain data
 - Are part of the sidechain consensus
+- **Note**: Anyone can participate in BMM (not just specific named participants)
 
 They could **report L1 transaction confirmations** as part of their validation process!
 
@@ -97,7 +98,7 @@ Swap Transaction Detection Flow:
    └─> Queries mainchain independently
    └─> Reports: "Swap X has 5 confirmations" (signed by Charles)
 
-Consensus: Require 2 out of 3 BMM participants to agree before updating swap state
+Consensus: Require N independent BMM participants (e.g., 2-3) to agree before updating swap state
 ```
 
 ### Advantages
@@ -136,9 +137,10 @@ fn validate_bmm_block_with_swap_reports(
 ### Security Model
 
 - **Trust Model**: Trust the BMM consensus (already trusted for sidechain)
-- **Attack Resistance**: Attacker needs to compromise 2 out of 3 BMM participants
+- **Attack Resistance**: Attacker needs to compromise N independent BMM participants (e.g., 2-3)
 - **Independence**: Each participant queries mainchain independently
 - **Auditability**: All reports are in sidechain blocks (immutable)
+- **Open Participation**: Anyone can BMM, making it harder for attackers to control consensus
 
 ### Comparison with Traditional Multi-Source RPC
 
@@ -164,7 +166,8 @@ fn validate_bmm_block_with_swap_reports(
    - Update swap states if consensus reached
 
 3. **Consensus Rules**:
-   - Require 2 out of 3 (or N out of M) participants to agree
+   - Require N independent participants (e.g., 2-3) to agree
+   - Participants are identified by their signing address (anyone can BMM)
    - All must report same transaction ID
    - Confirmations can differ slightly (within 1-2 blocks is OK)
    - Use median or minimum confirmation count

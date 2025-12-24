@@ -2,6 +2,10 @@
 
 This guide shows the correct order to run all the setup scripts for a complete regtest environment.
 
+> **Note:** If you want to run **automated integration tests**, you don't need these scripts!  
+> See `INTEGRATION_TESTS_GUIDE.md` or just run: `./run_integration_tests.sh`  
+> The integration tests handle all setup automatically.
+
 ## Prerequisites
 
 Make sure you have:

@@ -18,21 +18,25 @@ use crate::{
     types::{
         Accumulator, Address, AmountOverflowError, AmountUnderflowError,
         Authorized, AuthorizedTransaction, BlockHash, Body, FilledTransaction,
-        GetAddress, GetValue, Header, InPoint, M6id, MerkleRoot, OutPoint,
-        OutPointKey, Output, ParentChainType, PointedOutput, SpentOutput,
-        Swap, SwapId, SwapState, SwapTxId, Transaction, TxData, VERSION, Verify, Version,
-        WithdrawalBundle, WithdrawalBundleStatus,
+        GetAddress, GetValue, Header, HeaderChain, InPoint, L1TransactionReport,
+        M6id, MerkleRoot, OutPoint, OutPointKey, Output, ParentChainType,
+        PointedOutput, SpentOutput, Swap, SwapId, SwapState, SwapTxId,
+        Transaction, TxData, VERSION, Verify, Version, WithdrawalBundle,
+        WithdrawalBundleStatus,
         proto::mainchain::TwoWayPegData,
     },
     util::Watchable,
 };
 
+mod bmm_reports;
 mod block;
 mod error;
+mod header_chain;
 mod rollback;
 mod swap;
 mod two_way_peg_data;
 
+pub use bmm_reports::{get_swap_reports, process_bmm_swap_reports};
 pub use error::Error;
 use rollback::RollBack;
 
@@ -139,11 +143,22 @@ pub struct State {
         OutPointKey,
         SerdeBincode<SwapId>,
     >,
+    /// Header chains per parent chain
+    pub header_chains: DatabaseUnique<
+        SerdeBincode<ParentChainType>,
+        SerdeBincode<HeaderChain>,
+    >,
+    /// BMM swap reports: (swap_id, participant_address) -> L1TransactionReport
+    /// Used to build consensus across multiple BMM participants
+    pub bmm_swap_reports: DatabaseUnique<
+        SerdeBincode<(SwapId, Address)>,
+        SerdeBincode<L1TransactionReport>,
+    >,
     _version: DatabaseUnique<UnitKey, SerdeBincode<Version>>,
 }
 
 impl State {
-    pub const NUM_DBS: u32 = 15;
+    pub const NUM_DBS: u32 = 17;
 
     pub fn new(env: &sneed::Env) -> Result<Self, Error> {
         let mut rwtxn = env.write_txn().map_err(EnvError::from)?;
@@ -193,6 +208,10 @@ impl State {
         let locked_swap_outputs =
             DatabaseUnique::create(env, &mut rwtxn, "locked_swap_outputs")
                 .map_err(EnvError::from)?;
+        let header_chains = DatabaseUnique::create(env, &mut rwtxn, "header_chains")
+            .map_err(EnvError::from)?;
+        let bmm_swap_reports = DatabaseUnique::create(env, &mut rwtxn, "bmm_swap_reports")
+            .map_err(EnvError::from)?;
         let version = DatabaseUnique::create(env, &mut rwtxn, "state_version")
             .map_err(EnvError::from)?;
         if version
@@ -220,6 +239,8 @@ impl State {
             swaps_by_l1_txid,
             swaps_by_recipient,
             locked_swap_outputs,
+            header_chains,
+            bmm_swap_reports,
             _version: version,
         })
     }
