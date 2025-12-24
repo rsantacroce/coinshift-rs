@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use fallible_iterator::FallibleIterator;
 use sneed::{RoTxn, RwTxn, db::error::Error as DbError};
+use bitcoin::hashes::Hash as _;
 
 use crate::bitcoin_rpc::{BitcoinRpcClient, RpcConfig};
 use crate::{
@@ -541,19 +542,27 @@ fn connect_event(
 /// 4. Update swap state based on found transactions and confirmations
 /// Query L1 blockchain for matching transactions and update swap
 /// block_hash and block_height are the sidechain block where this validation occurs
+/// 
+/// Security improvements:
+/// - Checks if transaction is already used by another swap (prevents double-spending)
+/// - Validates transaction structure and confirms it's actually in a block
+/// - Verifies transaction exists and has required confirmations
 fn query_and_update_swap(
+    state: &State,
+    rotxn: &RoTxn,
     rpc_config: &RpcConfig,
     swap: &mut Swap,
     l1_recipient: &str,
     l1_amount: bitcoin::Amount,
     block_hash: BlockHash,
     block_height: u32,
-) -> Result<bool, crate::bitcoin_rpc::Error> {
+) -> Result<bool, Error> {
     let client = BitcoinRpcClient::new(rpc_config.clone());
     let amount_sats = l1_amount.to_sat();
     
     // Find transactions matching address and amount
-    let matches = client.find_transactions_by_address_and_amount(l1_recipient, amount_sats)?;
+    let matches = client.find_transactions_by_address_and_amount(l1_recipient, amount_sats)
+        .map_err(|e| Error::L1TransactionValidationFailed(format!("RPC error: {}", e)))?;
     
     if matches.is_empty() {
         return Ok(false);
@@ -565,8 +574,82 @@ fn query_and_update_swap(
     
     // Convert txid string to SwapTxId
     let txid_bytes = hex::decode(txid)
-        .map_err(|_| crate::bitcoin_rpc::Error::InvalidResponse)?;
+        .map_err(|_| Error::L1TransactionValidationFailed("Invalid transaction ID hex".to_string()))?;
     let l1_txid = SwapTxId::from_bytes(&txid_bytes);
+    
+    // SECURITY: Check if this transaction is already used by another swap
+    // This prevents the same L1 transaction from being used for multiple swaps
+    if let Some(existing_swap) = state.get_swap_by_l1_txid(rotxn, &swap.parent_chain, &l1_txid)? {
+        if existing_swap.id != swap.id {
+            tracing::warn!(
+                swap_id = %swap.id,
+                existing_swap_id = %existing_swap.id,
+                l1_txid = %txid,
+                "L1 transaction is already associated with another swap"
+            );
+            return Err(Error::L1TransactionAlreadyUsed {
+                txid: l1_txid,
+                swap_id: existing_swap.id,
+            });
+        }
+    }
+    
+    // SECURITY: Enhanced validation - verify transaction structure and confirmations
+    // Get full transaction details to validate
+    let tx_info = client.get_transaction(txid)
+        .map_err(|e| Error::L1TransactionValidationFailed(format!("Failed to get transaction details: {}", e)))?;
+    
+    // Verify transaction is confirmed (not just in mempool)
+    if tx_info.confirmations == 0 {
+        tracing::debug!(
+            swap_id = %swap.id,
+            l1_txid = %txid,
+            "Transaction is in mempool, waiting for confirmation"
+        );
+        return Ok(false);
+    }
+    
+    // Verify transaction has a block height (is actually in a block)
+    if tx_info.blockheight.is_none() {
+        tracing::warn!(
+            swap_id = %swap.id,
+            l1_txid = %txid,
+            "Transaction has confirmations but no block height - suspicious"
+        );
+        return Err(Error::L1TransactionValidationFailed(
+            "Transaction has confirmations but no block height".to_string()
+        ));
+    }
+    
+    // Verify at least one output matches the expected address and amount exactly
+    let mut found_matching_output = false;
+    for vout in &tx_info.vout {
+        let vout_value_sats = (vout.value * 100_000_000.0) as u64;
+        let matches_address = vout.script_pub_key.address.as_ref()
+            .map(|addr| addr == l1_recipient)
+            .unwrap_or(false)
+            || vout.script_pub_key.addresses.as_ref()
+                .map(|addrs| addrs.contains(&l1_recipient.to_string()))
+                .unwrap_or(false);
+        
+        if matches_address && vout_value_sats == amount_sats {
+            found_matching_output = true;
+            break;
+        }
+    }
+    
+    if !found_matching_output {
+        tracing::warn!(
+            swap_id = %swap.id,
+            l1_txid = %txid,
+            expected_address = %l1_recipient,
+            expected_amount_sats = %amount_sats,
+            "Transaction does not have matching output"
+        );
+        return Err(Error::L1TransactionValidationFailed(
+            "Transaction does not have output matching expected address and amount".to_string()
+        ));
+    }
     
     // Check if this is an update or new detection
     let zero_hash32 = [0u8; 32];
@@ -581,7 +664,8 @@ fn query_and_update_swap(
             confirmations = %confirmations,
             sender = %sender_address,
             is_open_swap = %swap.l2_recipient.is_none(),
-            "Detected new L1 transaction for swap"
+            block_height = ?tx_info.blockheight,
+            "Detected new L1 transaction for swap (validated)"
         );
         
         // Update swap with L1 transaction
@@ -605,6 +689,28 @@ fn query_and_update_swap(
         Ok(true)
     } else {
         // Update confirmations for existing transaction
+        // SECURITY: Verify the transaction ID matches what we already have
+        let current_txid = match &swap.l1_txid {
+            SwapTxId::Hash32(h) => {
+                use bitcoin::hashes::sha256d::Hash as Sha256dHash;
+                let hash = Sha256dHash::from_byte_array(*h);
+                bitcoin::Txid::from_raw_hash(hash).to_string()
+            }
+            SwapTxId::Hash(v) => hex::encode(v),
+        };
+        
+        if current_txid != *txid {
+            tracing::warn!(
+                swap_id = %swap.id,
+                current_txid = %current_txid,
+                new_txid = %txid,
+                "Transaction ID mismatch - possible attack or RPC error"
+            );
+            return Err(Error::L1TransactionValidationFailed(
+                format!("Transaction ID mismatch: expected {}, got {}", current_txid, txid)
+            ));
+        }
+        
         let current_confirmations = match swap.state {
             SwapState::WaitingConfirmations(current, _) => current,
             _ => 0,
@@ -736,6 +842,8 @@ fn process_coinshift_transactions(
             if let Some(get_rpc_config) = rpc_config_getter {
                 if let Some(rpc_config) = get_rpc_config(parent_chain_clone) {
                     match query_and_update_swap(
+                        state,
+                        rwtxn,
                         &rpc_config,
                         &mut swap,
                         l1_recipient,
@@ -754,11 +862,20 @@ fn process_coinshift_transactions(
                                 state.save_swap(rwtxn, &swap)?;
                             }
                         }
+                        Err(Error::L1TransactionAlreadyUsed { txid, swap_id }) => {
+                            tracing::warn!(
+                                swap_id = %swap.id,
+                                existing_swap_id = %swap_id,
+                                l1_txid = ?txid,
+                                "L1 transaction already used by another swap - skipping"
+                            );
+                            // Don't update this swap - the transaction is already claimed
+                        }
                         Err(e) => {
                             tracing::debug!(
                                 swap_id = %swap.id,
                                 error = %e,
-                                "Failed to query L1 blockchain for swap (this is normal if RPC is not configured)"
+                                "Failed to query L1 blockchain for swap (this is normal if RPC is not configured or validation failed)"
                             );
                         }
                     }

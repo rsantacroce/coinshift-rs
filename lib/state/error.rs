@@ -104,4 +104,11 @@ pub enum Error {
     SwapNotFound { swap_id: SwapId },
     #[error("Invalid transaction: {0}")]
     InvalidTransaction(String),
+    #[error("L1 transaction {txid:?} is already associated with swap {swap_id}")]
+    L1TransactionAlreadyUsed {
+        txid: crate::types::SwapTxId,
+        swap_id: SwapId,
+    },
+    #[error("L1 transaction validation failed: {0}")]
+    L1TransactionValidationFailed(String),
 }
