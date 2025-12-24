@@ -828,6 +828,12 @@ impl App {
         amount: bitcoin::Amount,
         fee: bitcoin::Amount,
     ) -> Result<bitcoin::Txid, Error> {
+        tracing::debug!(
+            "deposit parameters: address = {}, amount = {}, fee = {}",
+            address,
+            amount,
+            fee
+        );
         let Some(miner) = self.miner.as_ref() else {
             return Err(Error::NoCusfMainchainWalletClient);
         };
