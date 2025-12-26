@@ -12,7 +12,7 @@ use crate::{
         rollback::RollBack,
     },
     types::{
-        AccumulatorDiff, AggregatedWithdrawal, AmountOverflowError, GetValue,
+        AccumulatorDiff, AggregatedWithdrawal, AmountOverflowError, BlockHash, GetValue,
         InPoint, M6id, OutPoint, OutPointKey, Output, OutputContent,
         PointedOutput, PointedOutputRef, SpentOutput, Swap, SwapState,
         WithdrawalBundle, WithdrawalBundleEvent, WithdrawalBundleStatus, hash,
@@ -483,7 +483,7 @@ fn connect_event(
     latest_withdrawal_bundle_event_block_hash: &mut Option<bitcoin::BlockHash>,
     event_block_hash: bitcoin::BlockHash,
     event: &BlockEvent,
-    wallet: Option<&Wallet>,
+    _wallet: Option<&Wallet>,
 ) -> Result<(), Error> {
     match event {
         BlockEvent::Deposit(deposit) => {
@@ -493,28 +493,6 @@ fn connect_event(
             // Extract value and address for logging
             let value = output.content.get_value();
             let address = output.address;
-            
-            // Check if the address belongs to our wallet
-            let address_belongs_to_wallet = if let Some(wallet) = wallet {
-                wallet.has_address(&address).unwrap_or(false)
-            } else {
-                // If no wallet is provided, we can't verify, so skip the check
-                // This allows the code to work in contexts where wallet isn't available
-                true
-            };
-            
-            if !address_belongs_to_wallet {
-                tracing::warn!(
-                    %block_height,
-                    %event_block_hash,
-                    outpoint = %outpoint,
-                    address = %address,
-                    amount_btc = %value.to_string_in(bitcoin::Denomination::Bitcoin),
-                    amount_sats = %value.to_sat(),
-                    "Deposit from parent chain received but address does not belong to wallet, skipping"
-                );
-                return Ok(());
-            }
             
             tracing::info!(
                 %block_height,
@@ -562,11 +540,14 @@ fn connect_event(
 /// 3. Match transactions by: l1_recipient_address and l1_amount
 /// 4. Update swap state based on found transactions and confirmations
 /// Query L1 blockchain for matching transactions and update swap
+/// block_hash and block_height are the sidechain block where this validation occurs
 fn query_and_update_swap(
     rpc_config: &RpcConfig,
     swap: &mut Swap,
     l1_recipient: &str,
     l1_amount: bitcoin::Amount,
+    block_hash: BlockHash,
+    block_height: u32,
 ) -> Result<bool, crate::bitcoin_rpc::Error> {
     let client = BitcoinRpcClient::new(rpc_config.clone());
     let amount_sats = l1_amount.to_sat();
@@ -607,6 +588,9 @@ fn query_and_update_swap(
         // For open swaps, we don't store the sender address here - the claimer will provide
         // their L2 address when claiming, and we'll verify they sent the L1 transaction
         swap.update_l1_txid(l1_txid);
+        
+        // Save the sidechain block reference where this validation occurred
+        swap.set_l1_txid_validation_block(block_hash, block_height);
         
         // Update state based on confirmations
         if *confirmations >= swap.required_confirmations {
@@ -654,6 +638,7 @@ fn process_coinshift_transactions(
     state: &State,
     rwtxn: &mut RwTxn,
     block_height: u32,
+    block_hash: BlockHash,
     rpc_config_getter: Option<&dyn Fn(ParentChainType) -> Option<RpcConfig>>,
 ) -> Result<(), Error> {
     tracing::debug!(%block_height, "Starting to scan enforcer for coinshift transactions");
@@ -755,6 +740,8 @@ fn process_coinshift_transactions(
                         &mut swap,
                         l1_recipient,
                         l1_amount,
+                        block_hash,
+                        block_height,
                     ) {
                         Ok(updated) => {
                             if updated {
@@ -828,7 +815,8 @@ pub fn connect(
     }
 
     // Process coinshift transactions after processing deposits/withdrawals
-    process_coinshift_transactions(state, rwtxn, block_height, rpc_config_getter)?;
+    let block_hash = state.try_get_tip(rwtxn)?.ok_or(Error::NoTip)?;
+    process_coinshift_transactions(state, rwtxn, block_height, block_hash, rpc_config_getter)?;
     // Handle deposits.
     if let Some(latest_deposit_block_hash) = latest_deposit_block_hash {
         let deposit_block_seq_idx = state

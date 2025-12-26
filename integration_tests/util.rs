@@ -15,23 +15,17 @@ fn load_env_var_from_string(s: &str) -> Result<(), VarError> {
 
 #[derive(Clone, Debug)]
 pub struct BinPaths {
-    pub coinshift: PathBuf,
+    pub coinshift_app: PathBuf,
     pub others: EnforcerBinPaths,
 }
 
 impl BinPaths {
     /// Read from environment variables
     pub fn from_env() -> Result<Self, VarError> {
-        // Only set BITCOIN_UTIL and SIGNET_MINER to empty if they're not already set
-        // This prevents overriding values from the .env file
-        if dotenvy::var("BITCOIN_UTIL").is_err() {
-            let () = load_env_var_from_string("BITCOIN_UTIL=''")?;
-        }
-        if dotenvy::var("SIGNET_MINER").is_err() {
-            let () = load_env_var_from_string("SIGNET_MINER=''")?;
-        }
+        let () = load_env_var_from_string("BITCOIN_UTIL=''")?;
+        let () = load_env_var_from_string("SIGNET_MINER=''")?;
         Ok(Self {
-            coinshift: get_env_var("COINSHIFT_APP")?.into(),
+            coinshift_app: get_env_var("COINSHIFT_APP")?.into(),
             others: EnforcerBinPaths::from_env()?,
         })
     }
@@ -91,3 +85,4 @@ impl CoinshiftApp {
         )
     }
 }
+

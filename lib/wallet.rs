@@ -287,7 +287,8 @@ impl Wallet {
 
     /// Create a SwapCreate transaction for L2 → L1 swaps
     /// If l2_recipient is None, creates an open swap (anyone can fill it)
-    pub fn create_swap_create_tx(
+    /// `is_locked` is an optional function that returns true if an outpoint is locked to a swap
+    pub fn create_swap_create_tx<F>(
         &self,
         accumulator: &Accumulator,
         parent_chain: ParentChainType,
@@ -297,7 +298,11 @@ impl Wallet {
         l2_amount: bitcoin::Amount,
         required_confirmations: Option<u32>,
         fee: bitcoin::Amount,
-    ) -> Result<(Transaction, SwapId), Error> {
+        is_locked: F,
+    ) -> Result<(Transaction, SwapId), Error>
+    where
+        F: Fn(&OutPoint) -> bool,
+    {
         tracing::trace!(
             ?parent_chain,
             ?l1_recipient_address,
@@ -315,7 +320,7 @@ impl Wallet {
         let required_total = l2_amount
             .checked_add(fee)
             .ok_or(AmountOverflowError)?;
-        let (total, coins) = self.select_coins(required_total)?;
+        let (total, coins) = self.select_coins_with_filter(required_total, is_locked)?;
         let change = total - l2_amount - fee;
 
         // Get the sender address from the first UTXO (this is what validation will use)
@@ -499,6 +504,17 @@ impl Wallet {
         &self,
         value: bitcoin::Amount,
     ) -> Result<(bitcoin::Amount, HashMap<OutPoint, Output>), Error> {
+        self.select_coins_with_filter(value, |_| false)
+    }
+
+    pub fn select_coins_with_filter<F>(
+        &self,
+        value: bitcoin::Amount,
+        is_locked: F,
+    ) -> Result<(bitcoin::Amount, HashMap<OutPoint, Output>), Error>
+    where
+        F: Fn(&OutPoint) -> bool,
+    {
         use rayon::prelude::ParallelSliceMut;
         let rotxn = self.env.read_txn().map_err(EnvError::from)?;
         let mut utxos: Vec<_> = self
@@ -508,11 +524,57 @@ impl Wallet {
             .collect()
             .map_err(DbError::from)?;
         utxos.par_sort_unstable_by_key(|(_, output)| output.get_value());
+        
+        tracing::debug!(
+            total_utxos_in_wallet = utxos.len(),
+            required_value = %value,
+            "Starting coin selection"
+        );
 
         let mut selected = HashMap::new();
         let mut total = bitcoin::Amount::ZERO;
+        let mut skipped_withdrawal = 0;
+        let mut skipped_swap_pending = 0;
+        let mut skipped_locked = 0;
+        
         for (outpoint_key, output) in &utxos {
+            let outpoint: OutPoint = outpoint_key.into();
+            let content_kind = if output.content.is_swap_pending() {
+                "swap_pending"
+            } else if output.content.is_withdrawal() {
+                "withdrawal"
+            } else {
+                "value"
+            };
+            let is_locked_output = is_locked(&outpoint);
+
+            tracing::info!(
+                outpoint = ?outpoint,
+                value_sats = output.get_value().to_sat(),
+                content = content_kind,
+                is_locked = is_locked_output,
+                "Coin selection: evaluating UTXO"
+            );
+            
             if output.content.is_withdrawal() {
+                skipped_withdrawal += 1;
+                continue;
+            }
+            // Filter out SwapPending outputs - they are locked and should only be spent in SwapClaim transactions
+            if output.content.is_swap_pending() {
+                skipped_swap_pending += 1;
+                tracing::warn!(
+                    outpoint = ?outpoint,
+                    "Skipping SwapPending output in select_coins (should not be in wallet UTXOs)"
+                );
+                continue;
+            }
+            if is_locked_output {
+                skipped_locked += 1;
+                tracing::warn!(
+                    outpoint = ?outpoint,
+                    "Skipping locked output in select_coins (locked in node state but not filtered by content type)"
+                );
                 continue;
             }
             if total > value {
@@ -521,9 +583,38 @@ impl Wallet {
             total = total
                 .checked_add(output.get_value())
                 .ok_or(AmountOverflowError)?;
-            let outpoint: OutPoint = outpoint_key.into();
+            tracing::debug!(
+                outpoint = ?outpoint,
+                value = %output.get_value(),
+                "Selected UTXO for transaction"
+            );
             selected.insert(outpoint, output.clone());
         }
+        
+        // Emit a short sample of the selected UTXOs to help debug selection issues
+        for (outpoint, output) in selected.iter().take(10) {
+            tracing::info!(
+                outpoint = ?outpoint,
+                value_sats = output.get_value().to_sat(),
+                content_is_swap_pending = output.content.is_swap_pending(),
+                "Coin selection: selected UTXO"
+            );
+        }
+        if selected.len() > 10 {
+            tracing::info!(
+                extra_selected = selected.len() - 10,
+                "Coin selection: more selected UTXOs not shown"
+            );
+        }
+
+        tracing::info!(
+            selected_count = selected.len(),
+            total_selected = %total,
+            skipped_withdrawal = skipped_withdrawal,
+            skipped_swap_pending = skipped_swap_pending,
+            skipped_locked = skipped_locked,
+            "Coin selection completed"
+        );
         if total < value {
             return Err(Error::NotEnoughFunds);
         }

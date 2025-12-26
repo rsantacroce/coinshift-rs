@@ -6,7 +6,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::Address;
+use super::{Address, BlockHash};
 
 /// 32-byte swap identifier
 #[derive(
@@ -285,6 +285,10 @@ pub struct Swap {
     pub l1_claimer_address: Option<String>,
     pub created_at_height: u32,
     pub expires_at_height: Option<u32>,
+    /// Sidechain block hash where L1 txid was validated via parent chain RPC
+    pub l1_txid_validated_at_block_hash: Option<BlockHash>,
+    /// Sidechain block height where L1 txid was validated via parent chain RPC
+    pub l1_txid_validated_at_height: Option<u32>,
 }
 
 // Custom Borsh serialization for Swap (needed for integration tests)
@@ -306,6 +310,8 @@ impl BorshSerialize for Swap {
         BorshSerialize::serialize(&self.l1_claimer_address, writer)?;
         BorshSerialize::serialize(&self.created_at_height, writer)?;
         BorshSerialize::serialize(&self.expires_at_height, writer)?;
+        BorshSerialize::serialize(&self.l1_txid_validated_at_block_hash, writer)?;
+        BorshSerialize::serialize(&self.l1_txid_validated_at_height, writer)?;
         Ok(())
     }
 }
@@ -329,6 +335,8 @@ impl BorshDeserialize for Swap {
             l1_claimer_address: BorshDeserialize::deserialize_reader(reader)?,
             created_at_height: BorshDeserialize::deserialize_reader(reader)?,
             expires_at_height: BorshDeserialize::deserialize_reader(reader)?,
+            l1_txid_validated_at_block_hash: BorshDeserialize::deserialize_reader(reader)?,
+            l1_txid_validated_at_height: BorshDeserialize::deserialize_reader(reader)?,
         })
     }
 }
@@ -363,6 +371,8 @@ impl Swap {
             l1_claimer_address: None,
             created_at_height,
             expires_at_height,
+            l1_txid_validated_at_block_hash: None,
+            l1_txid_validated_at_height: None,
         }
     }
 
@@ -382,6 +392,16 @@ impl Swap {
     ) {
         self.l1_txid = l1_txid;
         self.l1_claimer_address = Some(l1_claimer_address);
+    }
+
+    /// Set the sidechain block reference where L1 txid was validated
+    pub fn set_l1_txid_validation_block(
+        &mut self,
+        block_hash: BlockHash,
+        block_height: u32,
+    ) {
+        self.l1_txid_validated_at_block_hash = Some(block_hash);
+        self.l1_txid_validated_at_height = Some(block_height);
     }
 }
 

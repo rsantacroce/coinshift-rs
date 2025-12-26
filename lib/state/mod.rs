@@ -1484,6 +1484,7 @@ impl State {
     /// Update swap L1 transaction ID and state
     /// Called when a coinshift transaction is detected on L1
     /// For open swaps, l1_claimer_address should be the address of the person who sent the L1 transaction
+    /// block_hash and block_height are the sidechain block where this update occurs
     pub fn update_swap_l1_txid(
         &self,
         rwtxn: &mut RwTxn,
@@ -1491,6 +1492,8 @@ impl State {
         l1_txid: SwapTxId,
         confirmations: u32,
         l1_claimer_address: Option<String>,  // For open swaps
+        block_hash: BlockHash,
+        block_height: u32,
     ) -> Result<(), Error> {
         let mut swap = self
             .get_swap(rwtxn, swap_id)?
@@ -1505,6 +1508,9 @@ impl State {
         } else {
             swap.update_l1_txid(l1_txid.clone());
         }
+
+        // Save the sidechain block reference where this validation occurred
+        swap.set_l1_txid_validation_block(block_hash, block_height);
 
         // Update state based on confirmations
         if confirmations >= swap.required_confirmations {
@@ -1659,15 +1665,18 @@ impl State {
                         );
                         
                         // Lock outputs for L2 → L1 swaps
+                        // Only lock SwapPending outputs (never change outputs)
                         if l1_recipient_address.is_some() {
-                            for (vout, _) in filled.transaction.outputs.iter().enumerate() {
-                                let outpoint = OutPoint::Regular {
-                                    txid,
-                                    vout: vout as u32,
-                                };
-                                // Only lock if not already locked (to handle reorgs)
-                                if self.is_output_locked_to_swap(rwtxn, &outpoint)?.is_none() {
-                                    self.lock_output_to_swap(rwtxn, &outpoint, &swap_id)?;
+                            for (vout, output) in filled.transaction.outputs.iter().enumerate() {
+                                if matches!(output.content, crate::types::OutputContent::SwapPending { .. }) {
+                                    let outpoint = OutPoint::Regular {
+                                        txid,
+                                        vout: vout as u32,
+                                    };
+                                    // Only lock if not already locked (to handle reorgs)
+                                    if self.is_output_locked_to_swap(rwtxn, &outpoint)?.is_none() {
+                                        self.lock_output_to_swap(rwtxn, &outpoint, &swap_id)?;
+                                    }
                                 }
                             }
                         }

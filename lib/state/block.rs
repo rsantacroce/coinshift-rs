@@ -324,15 +324,19 @@ pub fn connect_prevalidated(
                 );
 
                 // Lock outputs for L2 → L1 swaps
+                // Only lock outputs with SwapPending content, not change outputs
                 if l1_recipient_address.is_some() {
-                    for (vout, _) in filled.transaction.outputs.iter().enumerate() {
-                        let outpoint = OutPoint::Regular {
-                            txid,
-                            vout: vout as u32,
-                        };
-                        state
-                            .lock_output_to_swap(rwtxn, &outpoint, &swap_id)
-                            .map_err(Error::from)?;
+                    for (vout, output) in filled.transaction.outputs.iter().enumerate() {
+                        // Only lock SwapPending outputs, not regular Value outputs (change)
+                        if matches!(output.content, crate::types::OutputContent::SwapPending { .. }) {
+                            let outpoint = OutPoint::Regular {
+                                txid,
+                                vout: vout as u32,
+                            };
+                            state
+                                .lock_output_to_swap(rwtxn, &outpoint, &swap_id)
+                                .map_err(Error::from)?;
+                        }
                     }
                 }
 
@@ -678,13 +682,16 @@ pub fn disconnect_tip(
                 let swap_id = SwapId(*swap_id);
 
                 // Unlock outputs for L2 → L1 swaps
-                for (vout, _) in tx.outputs.iter().enumerate().rev() {
-                    let outpoint = OutPoint::Regular {
-                        txid,
-                        vout: vout as u32,
-                    };
-                    if state.is_output_locked_to_swap(rwtxn, &outpoint)? == Some(swap_id) {
-                        state.unlock_output_from_swap(rwtxn, &outpoint)?;
+                // Only unlock SwapPending outputs that were locked
+                for (vout, output) in tx.outputs.iter().enumerate().rev() {
+                    if matches!(output.content, crate::types::OutputContent::SwapPending { .. }) {
+                        let outpoint = OutPoint::Regular {
+                            txid,
+                            vout: vout as u32,
+                        };
+                        if state.is_output_locked_to_swap(rwtxn, &outpoint)? == Some(swap_id) {
+                            state.unlock_output_from_swap(rwtxn, &outpoint)?;
+                        }
                     }
                 }
 

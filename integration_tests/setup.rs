@@ -1,92 +1,22 @@
 use std::{
     net::{Ipv4Addr, SocketAddrV4},
     path::PathBuf,
-    sync::{Arc, Mutex as StdMutex, OnceLock},
     time::Duration,
 };
 
 use bip300301_enforcer_integration_tests::{
-    integration_test::{activate_sidechain, fund_enforcer, propose_sidechain},
-    setup::{Mode, Network, PostSetup as EnforcerPostSetup, Sidechain, setup as setup_enforcer},
+    setup::{PostSetup as EnforcerPostSetup, Sidechain},
     util::AbortOnDrop,
 };
-use bip300301_enforcer_lib::{
-    bins::CommandExt,
-    types::SidechainNumber,
-};
-use futures::{channel::mpsc, future};
+use bip300301_enforcer_lib::types::SidechainNumber;
+use futures::{TryFutureExt as _, channel::mpsc, future};
+use coinshift::types::{OutPoint, OutputContent, PointedOutput};
+use coinshift_app_rpc_api::RpcClient as _;
 use reserve_port::ReservedPort;
 use thiserror::Error;
-use coinshift::types::{OutputContent, PointedOutput};
-use coinshift_app_rpc_api::RpcClient as _;
 use tokio::time::sleep;
-use tokio::sync::Mutex;
 
-use crate::util::{BinPaths, CoinshiftApp};
-
-/// Verify that all required binary paths exist
-fn verify_bin_paths(bin_paths: &BinPaths) -> anyhow::Result<()> {
-    let current_dir = std::env::current_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "unknown".to_string());
-    tracing::info!("Verifying all binary paths exist (current dir: {})", current_dir);
-    
-    // Check coinshift
-    let coinshift_path = if bin_paths.coinshift.is_relative() {
-        std::env::current_dir()
-            .ok()
-            .and_then(|cwd| cwd.join(&bin_paths.coinshift).canonicalize().ok())
-            .unwrap_or_else(|| bin_paths.coinshift.clone())
-    } else {
-        bin_paths.coinshift.clone()
-    };
-    tracing::info!("  Checking coinshift: {:?} (resolved: {:?})", bin_paths.coinshift, coinshift_path);
-    let coinshift_exists = coinshift_path.exists();
-    if !coinshift_exists {
-        anyhow::bail!("Coinshift binary does not exist at: {:?} (resolved from: {:?}, current dir: {})", 
-            coinshift_path, bin_paths.coinshift, current_dir);
-    }
-    
-    // Check enforcer binaries
-    tracing::info!("  Checking bitcoind: {:?}", bin_paths.others.bitcoind);
-    if !bin_paths.others.bitcoind.exists() {
-        anyhow::bail!("Bitcoind binary does not exist at: {:?} (current dir: {})", 
-            bin_paths.others.bitcoind, current_dir);
-    }
-    
-    tracing::info!("  Checking bitcoin_cli: {:?}", bin_paths.others.bitcoin_cli);
-    if !bin_paths.others.bitcoin_cli.exists() {
-        anyhow::bail!("Bitcoin-cli binary does not exist at: {:?} (current dir: {})", 
-            bin_paths.others.bitcoin_cli, current_dir);
-    }
-    
-    tracing::info!("  Checking bitcoin_util: {:?}", bin_paths.others.bitcoin_util);
-    if !bin_paths.others.bitcoin_util.exists() {
-        anyhow::bail!("Bitcoin-util binary does not exist at: {:?} (current dir: {})", 
-            bin_paths.others.bitcoin_util, current_dir);
-    }
-    
-    tracing::info!("  Checking bip300301_enforcer: {:?}", bin_paths.others.bip300301_enforcer);
-    if !bin_paths.others.bip300301_enforcer.exists() {
-        anyhow::bail!("Bip300301_enforcer binary does not exist at: {:?} (current dir: {})", 
-            bin_paths.others.bip300301_enforcer, current_dir);
-    }
-    
-    tracing::info!("  Checking electrs: {:?}", bin_paths.others.electrs);
-    if !bin_paths.others.electrs.exists() {
-        anyhow::bail!("Electrs binary does not exist at: {:?} (current dir: {})", 
-            bin_paths.others.electrs, current_dir);
-    }
-    
-    tracing::info!("  Checking signet_miner: {:?}", bin_paths.others.signet_miner);
-    if !bin_paths.others.signet_miner.exists() {
-        anyhow::bail!("Signet miner script does not exist at: {:?} (current dir: {})", 
-            bin_paths.others.signet_miner, current_dir);
-    }
-    
-    tracing::info!("✓ All binary paths verified");
-    Ok(())
-}
+use crate::util::CoinshiftApp;
 
 #[derive(Debug)]
 pub struct ReservedPorts {
@@ -119,7 +49,7 @@ pub enum BmmError {
 
 #[derive(Debug, Error)]
 pub enum SetupError {
-    #[error("Failed to create coinshift dir")]
+    #[error("Failed to create Coinshift dir")]
     CreateCoinshiftDir(#[source] std::io::Error),
     #[error(transparent)]
     ReservePort(#[from] reserve_port::Error),
@@ -168,49 +98,16 @@ impl PostSetup {
         post_setup: &mut EnforcerPostSetup,
     ) -> Result<(), BmmError> {
         use bip300301_enforcer_integration_tests::mine::mine;
-        tracing::debug!("Starting BMM: calling mine() on sidechain and mainchain");
-        let result = future::try_join(
+        let ((), ()) = future::try_join(
+            self.rpc_client.mine(None).map_err(BmmError::from),
             async {
-                tracing::debug!("BMM: Starting sidechain mine() call (with 60s timeout)");
-                // Add a timeout to prevent hanging for too long
-                // Using 60s to match typical HTTP client timeout, but fail faster for retries
-                let result = match tokio::time::timeout(
-                    Duration::from_secs(60),
-                    self.rpc_client.mine(None)
-                ).await {
-                    Ok(Ok(())) => Ok(()),
-                    Ok(Err(e)) => Err(e),
-                    Err(_) => {
-                        tracing::error!("BMM: Sidechain mine() timed out after 60 seconds - mainchain task may be unresponsive");
-                        Err(jsonrpsee::core::ClientError::RequestTimeout)
-                    }
-                };
-                match &result {
-                    Ok(_) => tracing::debug!("BMM: Sidechain mine() succeeded"),
-                    Err(e) => tracing::error!("BMM: Sidechain mine() failed: {:#}", e),
-                }
-                result.map_err(BmmError::from)
-            },
-            async {
-                tracing::debug!("BMM: Waiting 1 second before mainchain mine");
                 sleep(Duration::from_secs(1)).await;
-                tracing::debug!("BMM: Starting mainchain mine() call");
-                let result = mine::<Self>(post_setup, 1, Some(true))
+                mine::<Self>(post_setup, 1, Some(true))
                     .await
-                    .map_err(BmmError::from);
-                match &result {
-                    Ok(_) => tracing::debug!("BMM: Mainchain mine() succeeded"),
-                    Err(e) => tracing::error!("BMM: Mainchain mine() failed: {:#}", e),
-                }
-                result
+                    .map_err(BmmError::from)
             },
         )
-        .await;
-        match &result {
-            Ok(_) => tracing::debug!("BMM: Both mine() calls completed successfully"),
-            Err(e) => tracing::error!("BMM: Failed with error: {:#}", e),
-        }
-        result?;
+        .await?;
         Ok(())
     }
 
@@ -238,7 +135,7 @@ impl PostSetup {
 
 impl Sidechain for PostSetup {
     const SIDECHAIN_NUMBER: SidechainNumber =
-        SidechainNumber(coinshift::types::THIS_SIDECHAIN);
+        SidechainNumber(coinshift::types::THIS_SIDECHAIN as u8);
 
     type Init = Init;
 
@@ -251,7 +148,10 @@ impl Sidechain for PostSetup {
     ) -> Result<Self, Self::SetupError> {
         let reserved_ports = ReservedPorts::new()?;
         let coinshift_dir = if let Some(suffix) = init.data_dir_suffix {
-            post_setup.out_dir.path().join(format!("coinshift-{suffix}"))
+            post_setup
+                .out_dir
+                .path()
+                .join(format!("coinshift-{suffix}"))
         } else {
             post_setup.out_dir.path().join("coinshift")
         };
@@ -275,7 +175,7 @@ impl Sidechain for PostSetup {
                     let _err: Result<(), _> = res_tx.unbounded_send(Err(err));
                 }
             });
-        tracing::debug!("Started coinshift");
+        tracing::debug!("Started Coinshift");
         sleep(Duration::from_secs(1)).await;
         let rpc_client = jsonrpsee::http_client::HttpClient::builder()
             .build(format!("http://127.0.0.1:{}", reserved_ports.rpc.port()))?;
@@ -312,13 +212,15 @@ impl Sidechain for PostSetup {
     ) -> Result<(), Self::ConfirmDepositError> {
         let is_expected = |utxo: &PointedOutput| {
             utxo.output.address.to_string() == address
-                && match utxo.output.content {
-                    OutputContent::Value(utxo_value) => utxo_value == value,
-                    OutputContent::Withdrawal { .. } => false,
-                    OutputContent::SwapPending { .. } => false,
+                && match &utxo.output.content {
+                    OutputContent::Value(utxo_value) => {
+                        *utxo_value == value
+                    }
+                    OutputContent::Withdrawal { .. }
+                    | OutputContent::SwapPending { .. } => false,
                 }
                 && match utxo.outpoint {
-                    coinshift::types::OutPoint::Deposit(outpoint) => {
+                    OutPoint::Deposit(outpoint) => {
                         outpoint.txid == txid
                     }
                     _ => false,
@@ -353,8 +255,8 @@ impl Sidechain for PostSetup {
             .withdraw(
                 receive_address.as_unchecked().clone(),
                 value.to_sat(),
-                0,
                 fee.to_sat(),
+                0,
             )
             .await?;
         let blocks_to_mine = 'blocks_to_mine: {
@@ -376,7 +278,7 @@ impl Sidechain for PostSetup {
             }
         };
         tracing::debug!(
-            "Mining coinshift blocks until withdrawal bundle is broadcast"
+            "Mining Coinshift blocks until withdrawal bundle is broadcast"
         );
         let () = self.bmm(post_setup, blocks_to_mine).await?;
         let pending_withdrawal_bundle =
@@ -388,374 +290,3 @@ impl Sidechain for PostSetup {
     }
 }
 
-/// Complete setup result containing both enforcer and coinshift post-setup
-// #[derive(Debug)]
-pub struct CompleteSetup {
-    pub enforcer: EnforcerPostSetup,
-    pub coinshift: PostSetup,
-}
-
-/// Shared signet setup that can be reused across multiple tests
-/// The enforcer is set up once, and each test can create its own isolated coinshift instance
-pub struct SharedSignetSetup {
-    pub bin_paths: BinPaths,
-    pub enforcer: Arc<tokio::sync::Mutex<EnforcerPostSetup>>,
-    pub res_tx: mpsc::UnboundedSender<anyhow::Result<()>>,
-}
-
-impl SharedSignetSetup {
-    /// Create a new isolated coinshift instance from the shared enforcer setup
-    /// Each test gets its own coinshift with its own data directory for isolation
-    pub async fn create_coinshift_instance(
-        &self,
-        data_dir_suffix: Option<String>,
-    ) -> anyhow::Result<PostSetup> {
-        let enforcer_guard = self.enforcer.lock().await;
-        let coinshift_init = Init {
-            coinshift_app: self.bin_paths.coinshift.clone(),
-            data_dir_suffix,
-        };
-        PostSetup::setup(
-            coinshift_init,
-            &*enforcer_guard,
-            self.res_tx.clone(),
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to create coinshift instance: {:#}", e))
-    }
-    
-    /// Get a reference to the enforcer (for BMM operations, etc.)
-    #[allow(dead_code)]
-    pub fn enforcer(&self) -> Arc<tokio::sync::Mutex<EnforcerPostSetup>> {
-        self.enforcer.clone()
-    }
-    
-    /// Create a complete setup with a new isolated coinshift instance
-    /// This is a convenience method that combines create_coinshift_instance with enforcer access
-    #[allow(dead_code)]
-    pub async fn create_complete_setup(
-        &self,
-        data_dir_suffix: Option<String>,
-    ) -> anyhow::Result<CompleteSetupWithSharedEnforcer> {
-        let coinshift = self.create_coinshift_instance(data_dir_suffix).await?;
-        Ok(CompleteSetupWithSharedEnforcer {
-            enforcer: self.enforcer.clone(),
-            coinshift,
-        })
-    }
-}
-
-/// Complete setup with shared enforcer (enforcer is shared, coinshift is isolated per test)
-#[allow(dead_code)]
-pub struct CompleteSetupWithSharedEnforcer {
-    pub enforcer: Arc<Mutex<EnforcerPostSetup>>,
-    pub coinshift: PostSetup,
-}
-
-impl CompleteSetupWithSharedEnforcer {
-    /// BMM a block using the shared enforcer
-    #[allow(dead_code)]
-    pub async fn bmm_single(&self) -> Result<(), BmmError> {
-        let mut enforcer_guard = self.enforcer.lock().await;
-        self.coinshift.bmm_single(&mut *enforcer_guard).await
-    }
-    
-    /// Get deposit address from coinshift
-    #[allow(dead_code)]
-    pub async fn get_deposit_address(&self) -> Result<String, std::convert::Infallible> {
-        self.coinshift.get_deposit_address().await
-    }
-    
-    /// Get mutable access to enforcer (for deposit, etc.)
-    /// This locks the shared enforcer mutex
-    #[allow(dead_code)]
-    pub async fn with_enforcer_mut<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut EnforcerPostSetup) -> R,
-    {
-        let mut enforcer_guard = self.enforcer.lock().await;
-        f(&mut *enforcer_guard)
-    }
-    
-    /// Get access to enforcer's bitcoin_cli (for commands)
-    #[allow(dead_code)]
-    pub async fn with_bitcoin_cli<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&bip300301_enforcer_lib::bins::BitcoinCli) -> R,
-    {
-        let enforcer_guard = self.enforcer.lock().await;
-        f(&enforcer_guard.bitcoin_cli)
-    }
-}
-
-/// Global shared signet setup (initialized once, reused by all tests)
-static SHARED_SIGNET_SETUP: OnceLock<Arc<tokio::sync::Mutex<Option<Arc<SharedSignetSetup>>>>> = OnceLock::new();
-
-/// Get or initialize the shared signet setup
-/// This is thread-safe and will only initialize once, even if called from multiple tests in parallel
-/// Each test should call this to get the shared setup, then create its own isolated coinshift instance
-pub async fn get_or_init_shared_signet_setup(
-    bin_paths: &BinPaths,
-    res_tx: mpsc::UnboundedSender<anyhow::Result<()>>,
-) -> anyhow::Result<Arc<SharedSignetSetup>> {
-    let setup_mutex = SHARED_SIGNET_SETUP.get_or_init(|| {
-        Arc::new(tokio::sync::Mutex::new(None))
-    });
-    
-    let mut setup_guard = setup_mutex.lock().await;
-    
-    if let Some(ref setup) = *setup_guard {
-        return Ok(setup.clone());
-    }
-    
-    // Initialize the shared setup
-    tracing::info!("Initializing shared signet setup (this happens once for all tests)");
-    
-    // Setup enforcer and sidechain (binary verification is cached)
-    let enforcer_post_setup = setup_signet_enforcer_and_sidechain(
-        bin_paths,
-        res_tx.clone(),
-    )
-    .await?;
-    
-    tracing::info!("✓ Shared signet setup complete - tests can now create isolated coinshift instances");
-    
-    let shared_setup = Arc::new(SharedSignetSetup {
-        bin_paths: bin_paths.clone(),
-        enforcer: Arc::new(Mutex::new(enforcer_post_setup)),
-        res_tx,
-    });
-    
-    *setup_guard = Some(shared_setup.clone());
-    Ok(shared_setup)
-}
-
-/// Initialize shared signet setup (call once before all tests)
-/// This sets up the enforcer and sidechain, which can then be reused by all tests
-#[allow(dead_code)]
-pub async fn init_shared_signet_setup(
-    bin_paths: &BinPaths,
-    res_tx: mpsc::UnboundedSender<anyhow::Result<()>>,
-) -> anyhow::Result<SharedSignetSetup> {
-    tracing::info!("Initializing shared signet setup (this happens once for all tests)");
-    
-    // Setup enforcer and sidechain (binary verification is cached)
-    let enforcer_post_setup = setup_signet_enforcer_and_sidechain(
-        bin_paths,
-        res_tx.clone(),
-    )
-    .await?;
-    
-    tracing::info!("✓ Shared signet setup complete - tests can now create isolated coinshift instances");
-    
-    Ok(SharedSignetSetup {
-        bin_paths: bin_paths.clone(),
-        enforcer: Arc::new(Mutex::new(enforcer_post_setup)),
-        res_tx,
-    })
-}
-
-/// Mine a single signet block
-async fn mine_single_signet(
-    signet_miner: &bip300301_enforcer_lib::bins::SignetMiner,
-    mining_address: &bitcoin::Address,
-) -> anyhow::Result<()> {
-    tracing::info!("Mining a single signet block to address: {}", mining_address);
-    let _mine_output = signet_miner
-        .command(
-            "generate",
-            vec![
-                "--address",
-                &mining_address.to_string(),
-                "--block-interval",
-                "1",
-            ],
-        )
-        .run_utf8()
-        .await?;
-    Ok(())
-}
-
-/// Static flag to track if binaries have been verified
-static BINARIES_VERIFIED: StdMutex<Option<bool>> = StdMutex::new(None);
-
-/// Verify binaries once (cached across all tests)
-/// This is called by setup functions to avoid redundant verification
-fn verify_bin_paths_once(bin_paths: &BinPaths) -> anyhow::Result<()> {
-    let mut verified = BINARIES_VERIFIED.lock().unwrap();
-    if verified.is_none() {
-        tracing::info!("Verifying binary paths (this only happens once)");
-        verify_bin_paths(bin_paths)?;
-        tracing::info!("✓ Binary paths verified (cached for all subsequent tests)");
-        *verified = Some(true);
-    }
-    Ok(())
-}
-
-/// Helper to extract common signet setup steps
-/// This reduces code duplication in setup_signet
-async fn setup_signet_enforcer_and_sidechain(
-    bin_paths: &BinPaths,
-    res_tx: mpsc::UnboundedSender<anyhow::Result<()>>,
-) -> anyhow::Result<EnforcerPostSetup> {
-    // Verify all binary paths exist (cached, only runs once)
-    verify_bin_paths_once(bin_paths)?;
-    
-    // Setup enforcer with signet
-    // Note: Signet requires Mode::GetBlockTemplate because GenerateBlocks is not supported on Signet
-    tracing::info!("Calling setup_enforcer for signet network with GetBlockTemplate mode");
-    let mut enforcer_post_setup = setup_enforcer(
-        &bin_paths.others,
-        Network::Signet,
-        Mode::GetBlockTemplate,
-        res_tx.clone(),
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!("setup_enforcer failed: {:#}", e);
-        anyhow::anyhow!("setup_enforcer failed: {:#}", e)
-    })?;
-    tracing::info!("setup_enforcer completed successfully");
-    
-    tracing::info!("Enforcer setup complete, mining additional signet blocks to fund enforcer wallet");
-    
-    // First block is already mined during setup, so we need 1 more to reach 2 blocks minimum
-    // But we should mine more blocks to ensure sufficient funding for all operations
-    // On signet, each block gives ~0.00003125 BTC
-    // We want at least 0.1 BTC (10,000,000 sats) for operations, so we need ~3200 blocks
-    // But that's too many, so let's mine a reasonable amount (e.g., 200 blocks = ~0.00625 BTC)
-    // This should be enough for most test operations
-    const INITIAL_FUNDING_BLOCKS: u32 = 200;
-    tracing::info!("Mining {} signet blocks to fund enforcer wallet (target: ~{} BTC)", 
-        INITIAL_FUNDING_BLOCKS, INITIAL_FUNDING_BLOCKS as f64 * 0.00003125);
-    
-    for i in 0..INITIAL_FUNDING_BLOCKS {
-        let () = mine_single_signet(
-            &enforcer_post_setup.signet_miner,
-            &enforcer_post_setup.mining_address,
-        )
-        .await?;
-        if (i + 1) % 50 == 0 {
-            tracing::debug!("Mined {} blocks so far...", i + 1);
-        }
-    }
-    
-    // Wait a bit for wallet to update
-    sleep(Duration::from_secs(2)).await;
-    
-    // Verify we have the expected blocks and check balance
-    let block_count: u32 = enforcer_post_setup
-        .bitcoin_cli
-        .command::<String, _, String, _, _>([], "getblockcount", [])
-        .run_utf8()
-        .await?
-        .parse()?;
-    anyhow::ensure!(block_count >= 2, "Expected at least 2 blocks, got {block_count}");
-    
-    // Check balance to verify funding
-    let balance_str = enforcer_post_setup
-        .bitcoin_cli
-        .command::<String, _, String, _, _>([], "getbalance", [])
-        .run_utf8()
-        .await
-        .unwrap_or_else(|_| "0".to_string());
-    let balance_btc: f64 = balance_str.trim().parse().unwrap_or(0.0);
-    tracing::info!("Successfully mined {} signet blocks (block count: {}, balance: {} BTC / {} sats)", 
-        INITIAL_FUNDING_BLOCKS, block_count, balance_str.trim(), (balance_btc * 100_000_000.0) as u64);
-    
-    // Setup coinshift sidechain (propose, activate, fund)
-    tracing::info!("Setting up coinshift sidechain");
-    let () = propose_sidechain::<PostSetup>(&mut enforcer_post_setup).await?;
-    tracing::info!("Proposed sidechain successfully");
-    let () = activate_sidechain::<PostSetup>(&mut enforcer_post_setup).await?;
-    tracing::info!("Activated sidechain successfully");
-    let () = fund_enforcer::<PostSetup>(&mut enforcer_post_setup).await?;
-    tracing::info!("Funded enforcer successfully");
-    
-    Ok(enforcer_post_setup)
-}
-
-/// Setup signet network with 2 blocks mined
-/// 
-/// Note: Binary verification is cached and only runs once across all tests.
-/// Each test still gets its own isolated enforcer and coinshift instances.
-pub async fn setup_signet(
-    bin_paths: &BinPaths,
-    coinshift_init: Init,
-    res_tx: mpsc::UnboundedSender<anyhow::Result<()>>,
-) -> anyhow::Result<CompleteSetup> {
-    tracing::info!("Setting up signet network");
-    
-    // Setup enforcer and sidechain (binary verification is cached)
-    let enforcer_post_setup = setup_signet_enforcer_and_sidechain(
-        bin_paths,
-        res_tx.clone(),
-    )
-    .await?;
-    
-    // Create isolated coinshift instance for this test
-    let coinshift_post_setup = PostSetup::setup(
-        coinshift_init,
-        &enforcer_post_setup,
-        res_tx,
-    )
-    .await?;
-    tracing::info!("Coinshift setup complete");
-    
-    Ok(CompleteSetup {
-        enforcer: enforcer_post_setup,
-        coinshift: coinshift_post_setup,
-    })
-}
-
-/// Setup regtest network
-pub async fn setup_regtest(
-    bin_paths: &BinPaths,
-    coinshift_init: Init,
-    mode: Mode,
-    res_tx: mpsc::UnboundedSender<anyhow::Result<()>>,
-) -> anyhow::Result<CompleteSetup> {
-    tracing::info!("Setting up regtest network");
-    
-    // Verify all binary paths exist (cached, only runs once)
-    verify_bin_paths_once(bin_paths)?;
-    
-    // Setup enforcer with regtest
-    tracing::info!("Calling setup_enforcer for regtest network");
-    let mut enforcer_post_setup = setup_enforcer(
-        &bin_paths.others,
-        Network::Regtest,
-        mode,
-        res_tx.clone(),
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!("setup_enforcer failed: {:#}", e);
-        anyhow::anyhow!("setup_enforcer failed: {:#}", e)
-    })?;
-    tracing::info!("setup_enforcer completed successfully");
-    
-    tracing::info!("Enforcer setup complete");
-    
-    // Setup coinshift sidechain
-    tracing::info!("Setting up coinshift sidechain");
-    let () = propose_sidechain::<PostSetup>(&mut enforcer_post_setup).await?;
-    tracing::info!("Proposed sidechain successfully");
-    let () = activate_sidechain::<PostSetup>(&mut enforcer_post_setup).await?;
-    tracing::info!("Activated sidechain successfully");
-    let () = fund_enforcer::<PostSetup>(&mut enforcer_post_setup).await?;
-    tracing::info!("Funded enforcer successfully");
-    
-    let coinshift_post_setup = PostSetup::setup(
-        coinshift_init,
-        &enforcer_post_setup,
-        res_tx,
-    )
-    .await?;
-    tracing::info!("Coinshift setup complete");
-    
-    Ok(CompleteSetup {
-        enforcer: enforcer_post_setup,
-        coinshift: coinshift_post_setup,
-    })
-}

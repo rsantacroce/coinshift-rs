@@ -56,14 +56,14 @@ async fn unknown_withdrawal_task(
     let mut enforcer_post_setup = setup(&bin_paths, res_tx.clone()).await?;
     let mut sidechain_withdrawer = PostSetup::setup(
         Init {
-            coinshift_app: bin_paths.coinshift.clone(),
+            coinshift_app: bin_paths.coinshift_app.clone(),
             data_dir_suffix: Some("withdrawer".to_owned()),
         },
         &enforcer_post_setup,
         res_tx.clone(),
     )
     .await?;
-    tracing::info!("Setup coinshift withdrawer node successfully");
+    tracing::info!("Setup Coinshift withdrawer node successfully");
     let withdrawer_deposit_address =
         sidechain_withdrawer.get_deposit_address().await?;
     let () = deposit(
@@ -87,14 +87,14 @@ async fn unknown_withdrawal_task(
     // New sidechain node, starting from scratch
     let mut sidechain_successor = PostSetup::setup(
         Init {
-            coinshift_app: bin_paths.coinshift,
+            coinshift_app: bin_paths.coinshift_app,
             data_dir_suffix: Some("successor".to_owned()),
         },
         &enforcer_post_setup,
         res_tx,
     )
     .await?;
-    tracing::info!("Setup coinshift successor node successfully");
+    tracing::info!("Setup Coinshift successor node successfully");
     tracing::debug!("BMM 1 block");
     sidechain_successor
         .bmm_single(&mut enforcer_post_setup)
@@ -170,3 +170,4 @@ pub fn unknown_withdrawal_trial(
 ) -> AsyncTrial<BoxFuture<'static, anyhow::Result<()>>> {
     AsyncTrial::new("unknown_withdrawal", unknown_withdrawal(bin_paths).boxed())
 }
+
