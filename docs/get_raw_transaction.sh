@@ -21,6 +21,9 @@
 # Exit on error
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/_env.sh"
+
 # Parse arguments
 echo "=========================================="
 echo "Get Raw Transaction Script"
@@ -80,19 +83,19 @@ if [ "$CHAIN" != "mainchain" ] && [ "$CHAIN" != "parentchain" ]; then
 fi
 
 # Bitcoin Core settings
-export BITCOIN_DIR="/home/parallels/Projects/bitcoin-patched/build/bin"
+export BITCOIN_DIR="${PROJECT_ROOT}/bitcoin-patched/build/bin"
 export BITCOIN_CLI="$BITCOIN_DIR/bitcoin-cli"
 export RPC_USER="user"
 export RPC_PASSWORD="passwordDC"
 
 # Mainchain regtest
 export MAINCHAIN_RPC_PORT="18443"
-export MAINCHAIN_DATADIR="/home/parallels/Projects/coinshift-mainchain-data"
+export MAINCHAIN_DATADIR="${PROJECT_ROOT}/coinshift-mainchain-data"
 export MAINCHAIN_WALLET="mainchainwallet"
 
 # Parentchain regtest
 export PARENTCHAIN_RPC_PORT="18444"
-export PARENTCHAIN_DATADIR="/home/parallels/Projects/coinshift-parentchain-data"
+export PARENTCHAIN_DATADIR="${PROJECT_ROOT}/coinshift-parentchain-data"
 export PARENTCHAIN_WALLET="parentchainwallet"
 
 # Set chain-specific variables

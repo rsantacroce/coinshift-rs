@@ -262,6 +262,181 @@ pub fn validate_swap_claim(
     Ok(())
 }
 
+/// Validate a SwapRegisterPayment transaction (Phase 1+).
+pub fn validate_swap_register_payment(
+    state: &State,
+    rotxn: &RoTxn,
+    transaction: &Transaction,
+    _filled_transaction: &FilledTransaction,
+) -> Result<(), Error> {
+    let TxData::SwapRegisterPayment { swap_id, tx_ref_bytes } = &transaction.data
+    else {
+        return Err(Error::InvalidTransaction(
+            "Expected SwapRegisterPayment transaction".to_string(),
+        ));
+    };
+    let swap_id = SwapId(*swap_id);
+    let swap = state
+        .get_swap(rotxn, &swap_id)?
+        .ok_or_else(|| Error::SwapNotFound { swap_id })?;
+
+    // Phase 1 scope: LTC + ZEC only
+    if !matches!(swap.parent_chain, crate::types::ParentChainType::LTC | crate::types::ParentChainType::ZEC) {
+        return Err(Error::InvalidTransaction(
+            "SwapRegisterPayment only supported for LTC/ZEC in Phase 1".to_string(),
+        ));
+    }
+
+    if !matches!(swap.state, SwapState::Pending) {
+        return Err(Error::InvalidTransaction(
+            "SwapRegisterPayment only allowed from Pending state".to_string(),
+        ));
+    }
+
+    // For Phase 1 LTC/ZEC, tx_ref must be 32-byte txid.
+    if tx_ref_bytes.len() != 32 {
+        return Err(Error::InvalidTransaction(
+            "tx_ref_bytes must be 32 bytes (txid) for Phase 1".to_string(),
+        ));
+    }
+
+    // Must not spend locked outputs (stateful swap funds).
+    validate_no_locked_outputs(state, rotxn, transaction)?;
+
+    Ok(())
+}
+
+/// Validate a SwapDisputePayment transaction (Phase 1+).
+///
+/// Alice-only rule: the transaction must spend at least one input owned by `swap.l2_sender`,
+/// which is enforced indirectly by Coinshift’s signature rules.
+pub fn validate_swap_dispute_payment(
+    state: &State,
+    rotxn: &RoTxn,
+    transaction: &Transaction,
+    filled_transaction: &FilledTransaction,
+) -> Result<(), Error> {
+    let TxData::SwapDisputePayment { swap_id } = &transaction.data else {
+        return Err(Error::InvalidTransaction(
+            "Expected SwapDisputePayment transaction".to_string(),
+        ));
+    };
+    let swap_id = SwapId(*swap_id);
+    let swap = state
+        .get_swap(rotxn, &swap_id)?
+        .ok_or_else(|| Error::SwapNotFound { swap_id })?;
+
+    if !matches!(swap.parent_chain, crate::types::ParentChainType::LTC | crate::types::ParentChainType::ZEC) {
+        return Err(Error::InvalidTransaction(
+            "SwapDisputePayment only supported for LTC/ZEC in Phase 1".to_string(),
+        ));
+    }
+
+    if !matches!(swap.state, SwapState::WaitingConfirmations(..)) {
+        return Err(Error::InvalidTransaction(
+            "SwapDisputePayment only allowed after payment registration".to_string(),
+        ));
+    }
+
+    if swap.is_disputed {
+        return Err(Error::InvalidTransaction(
+            "Swap is already disputed".to_string(),
+        ));
+    }
+
+    // Enforce dispute window: must be before (or at) registered_at + dispute_blocks.
+    let registered_at = swap.l1_txid_validated_at_height.ok_or_else(|| {
+        Error::InvalidTransaction(
+            "SwapDisputePayment requires a registered payment (missing registered_at height)".to_string(),
+        )
+    })?;
+    let tip_height = state.try_get_height(rotxn)?.unwrap_or(0);
+    let deadline = registered_at.saturating_add(swap.required_confirmations);
+    if tip_height > deadline {
+        return Err(Error::InvalidTransaction(
+            "Dispute window has expired".to_string(),
+        ));
+    }
+
+    // Alice-only: require at least one spent UTXO owned by swap.l2_sender.
+    if filled_transaction
+        .spent_utxos
+        .iter()
+        .all(|utxo| utxo.address != swap.l2_sender)
+    {
+        return Err(Error::InvalidTransaction(
+            "SwapDisputePayment must spend at least one input owned by the swap creator (Alice)".to_string(),
+        ));
+    }
+
+    // Must not spend locked outputs (swap funds).
+    validate_no_locked_outputs(state, rotxn, transaction)?;
+
+    Ok(())
+}
+
+/// Validate a SwapSubmitProof transaction (Phase 1+).
+pub fn validate_swap_submit_proof(
+    state: &State,
+    rotxn: &RoTxn,
+    transaction: &Transaction,
+    _filled_transaction: &FilledTransaction,
+) -> Result<(), Error> {
+    let TxData::SwapSubmitProof { swap_id, proof } = &transaction.data else {
+        return Err(Error::InvalidTransaction(
+            "Expected SwapSubmitProof transaction".to_string(),
+        ));
+    };
+    let swap_id = SwapId(*swap_id);
+    let swap = state
+        .get_swap(rotxn, &swap_id)?
+        .ok_or_else(|| Error::SwapNotFound { swap_id })?;
+
+    if !matches!(swap.parent_chain, crate::types::ParentChainType::LTC | crate::types::ParentChainType::ZEC) {
+        return Err(Error::InvalidTransaction(
+            "SwapSubmitProof only supported for LTC/ZEC in Phase 1".to_string(),
+        ));
+    }
+
+    // Allow submitting a proof directly from Pending (implicit registration),
+    // or after explicit registration (WaitingConfirmations).
+    if !matches!(swap.state, SwapState::Pending | SwapState::WaitingConfirmations(..)) {
+        return Err(Error::InvalidTransaction(
+            "SwapSubmitProof requires Pending or WaitingConfirmations state".to_string(),
+        ));
+    }
+
+    // If Alice disputed, proof must arrive during the dispute window.
+    if swap.is_disputed {
+        let registered_at = swap.l1_txid_validated_at_height.ok_or_else(|| {
+            Error::InvalidTransaction(
+                "SwapSubmitProof requires a registered payment (missing registered_at height)".to_string(),
+            )
+        })?;
+        let tip_height = state.try_get_height(rotxn)?.unwrap_or(0);
+        let deadline = registered_at.saturating_add(swap.required_confirmations);
+        if tip_height > deadline {
+            return Err(Error::InvalidTransaction(
+                "Dispute window has expired; proof is too late".to_string(),
+            ));
+        }
+    }
+
+    if proof.is_empty() {
+        return Err(Error::InvalidTransaction(
+            "Proof must be non-empty".to_string(),
+        ));
+    }
+
+    // Must not spend locked outputs (swap funds).
+    validate_no_locked_outputs(state, rotxn, transaction)?;
+
+    // Deterministic proof verification.
+    crate::spv::verify_swap_spv_proof(&swap, proof.as_slice())?;
+
+    Ok(())
+}
+
 /// Validate that non-SwapClaim transactions don't spend locked outputs
 pub fn validate_no_locked_outputs(
     state: &State,

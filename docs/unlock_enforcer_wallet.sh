@@ -16,6 +16,9 @@
 # Exit on error
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/_env.sh"
+
 # Enforcer gRPC settings (should match 3_start_enforcer.sh)
 export ENFORCER_GRPC_PORT="50051"
 export ENFORCER_GRPC_ADDR="127.0.0.1:$ENFORCER_GRPC_PORT"

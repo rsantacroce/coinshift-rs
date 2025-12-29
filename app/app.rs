@@ -352,9 +352,18 @@ impl App {
             let swaps_to_check: Vec<_> = swaps
                 .iter()
                 .filter(|swap| {
-                    matches!(swap.state, SwapState::WaitingConfirmations(..))
+                    // Safety: confirmations fetched from a local RPC endpoint are not a
+                    // deterministic consensus input. Only allow this legacy convenience
+                    // path for Bitcoin networks (BTC/Signet/Regtest). Other chains must
+                    // advance via on-chain proofs (Phase 1+).
+                    swap.parent_chain.supports_bitcoin_core_rpc_validation()
+                        && matches!(swap.state, SwapState::WaitingConfirmations(..))
                         && !matches!(swap.l1_txid, SwapTxId::Hash32(h) if h == [0u8; 32])
-                        && !matches!(swap.l1_txid, SwapTxId::Hash(ref v) if v.is_empty() || v.iter().all(|&b| b == 0))
+                        && !matches!(
+                            swap.l1_txid,
+                            SwapTxId::Hash(ref v)
+                                if v.is_empty() || v.iter().all(|&b| b == 0)
+                        )
                 })
                 .collect();
             

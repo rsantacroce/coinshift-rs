@@ -13,6 +13,7 @@ clap = { version = "4.5.4", features = ["derive"] }
 http = { workspace = true }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 serde_json = { workspace = true }
+hex = { workspace = true }
 coinshift = { path = "../lib" }
 coinshift_app_rpc_api = { path = "../rpc-api" }
 tokio = { workspace = true }

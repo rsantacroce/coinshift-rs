@@ -7,13 +7,16 @@
 #   P2P: 38333
 #   ZMQ: 29000-29004
 #
-# Data directory: /home/parallels/Projects/coinshift-mainchain-data
+# Data directory: $PROJECT_ROOT/coinshift-mainchain-data
 #
 
 # Exit on error
 set -e
 
-export BITCOIN_DIR="/home/parallels/Projects/bitcoin-patched/build/bin"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/_env.sh"
+
+export BITCOIN_DIR="${PROJECT_ROOT}/bitcoin-patched/build/bin"
 export BITCOIND="$BITCOIN_DIR/bitcoind"
 export BITCOIN_CLI="$BITCOIN_DIR/bitcoin-cli"
 export RPC_USER="user"
@@ -22,7 +25,7 @@ export RPC_PASSWORD="passwordDC"
 # Mainchain regtest (for sidechain activation)
 export MAINCHAIN_RPC_PORT="18443"
 export MAINCHAIN_P2P_PORT="38333"
-export MAINCHAIN_DATADIR="/home/parallels/Projects/coinshift-mainchain-data"
+export MAINCHAIN_DATADIR="${PROJECT_ROOT}/coinshift-mainchain-data"
 export MAINCHAIN_WALLET="mainchainwallet"
 
 # ZMQ (for mainchain)

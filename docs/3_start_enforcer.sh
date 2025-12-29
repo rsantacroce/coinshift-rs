@@ -12,6 +12,10 @@
 # Exit on error
 set -e
 
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/_env.sh"
+
 # Parse command line arguments
 SKIP_PROPOSAL=0
 for arg in "$@"; do
@@ -26,15 +30,15 @@ for arg in "$@"; do
     esac
 done
 
-export BITCOIN_DIR="/home/parallels/Projects/bitcoin-patched/build/bin"
+export BITCOIN_DIR="${PROJECT_ROOT}/bitcoin-patched/build/bin"
 export BITCOIN_CLI="$BITCOIN_DIR/bitcoin-cli"
-export ENFORCER="/home/parallels/Projects/bip300301_enforcer/target/debug/bip300301_enforcer"
+export ENFORCER="${PROJECT_ROOT}/bip300301_enforcer/target/debug/bip300301_enforcer"
 export RPC_USER="user"
 export RPC_PASSWORD="passwordDC"
 
 # Mainchain regtest (for sidechain activation)
 export MAINCHAIN_RPC_PORT="18443"
-export MAINCHAIN_DATADIR="/home/parallels/Projects/coinshift-mainchain-data"
+export MAINCHAIN_DATADIR="${PROJECT_ROOT}/coinshift-mainchain-data"
 export MAINCHAIN_WALLET="mainchainwallet"
 
 # Enforcer
@@ -44,9 +48,6 @@ export ENFORCER_GRPC_URL="http://$ENFORCER_GRPC_ADDR"
 
 # ZMQ (for mainchain)
 export ZMQ_SEQUENCE="tcp://127.0.0.1:29000"
-
-# Get script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "=========================================="
 echo "Starting Enforcer"

@@ -410,6 +410,30 @@ impl State {
                     &filled_transaction,
                 )?;
             }
+            TxData::SwapRegisterPayment { .. } => {
+                swap::validate_swap_register_payment(
+                    self,
+                    rotxn,
+                    &transaction.transaction,
+                    &filled_transaction,
+                )?;
+            }
+            TxData::SwapDisputePayment { .. } => {
+                swap::validate_swap_dispute_payment(
+                    self,
+                    rotxn,
+                    &transaction.transaction,
+                    &filled_transaction,
+                )?;
+            }
+            TxData::SwapSubmitProof { .. } => {
+                swap::validate_swap_submit_proof(
+                    self,
+                    rotxn,
+                    &transaction.transaction,
+                    &filled_transaction,
+                )?;
+            }
             TxData::SwapClaim { .. } => {
                 swap::validate_swap_claim(
                     self,
@@ -1648,12 +1672,24 @@ impl State {
                         
                         // Reconstruct L1 txid
                         let l1_txid = SwapTxId::from_bytes(l1_txid_bytes);
+
+                        // Bind the swap creator ("Alice") deterministically to the first spent UTXO.
+                        let l2_sender = filled
+                            .spent_utxos
+                            .first()
+                            .ok_or_else(|| {
+                                Error::InvalidTransaction(
+                                    "SwapCreate must have inputs".to_string(),
+                                )
+                            })?
+                            .address;
                         
                         // Reconstruct swap object
                         let swap = Swap::new(
                             swap_id,
                             crate::types::SwapDirection::L2ToL1,
                             *parent_chain,
+                            l2_sender,
                             l1_txid,
                             Some(*required_confirmations),
                             *l2_recipient,
@@ -1691,6 +1727,50 @@ impl State {
                                 current_height = height,
                                 "Reconstructing swaps..."
                             );
+                        }
+                    }
+                    TxData::SwapRegisterPayment { swap_id, tx_ref_bytes } => {
+                        let swap_id = SwapId(*swap_id);
+                        if let Some(mut swap) = self.get_swap(rwtxn, &swap_id)? {
+                            let txid_bytes: [u8; 32] = tx_ref_bytes
+                                .as_slice()
+                                .try_into()
+                                .map_err(|_| {
+                                    Error::InvalidTransaction(
+                                        "SwapRegisterPayment tx_ref_bytes must be 32 bytes".to_string(),
+                                    )
+                                })?;
+                            let new_txid = SwapTxId::Hash32(txid_bytes);
+                            let old = swap.l1_txid.clone();
+                            swap.update_l1_txid(new_txid.clone());
+                            swap.is_disputed = false;
+                            swap.state = SwapState::WaitingConfirmations(0, swap.required_confirmations);
+                            swap.set_l1_txid_validation_block(*block_hash, height);
+                            self.save_swap(rwtxn, &swap)?;
+                            // best-effort rebuild index
+                            drop(self.swaps_by_l1_txid.delete(
+                                rwtxn,
+                                &(swap.parent_chain, old),
+                            ));
+                            drop(self.swaps_by_l1_txid.put(
+                                rwtxn,
+                                &(swap.parent_chain, new_txid),
+                                &swap_id,
+                            ));
+                        }
+                    }
+                    TxData::SwapDisputePayment { swap_id } => {
+                        let swap_id = SwapId(*swap_id);
+                        if let Some(mut swap) = self.get_swap(rwtxn, &swap_id)? {
+                            swap.is_disputed = true;
+                            self.save_swap(rwtxn, &swap)?;
+                        }
+                    }
+                    TxData::SwapSubmitProof { swap_id, proof: _ } => {
+                        let swap_id = SwapId(*swap_id);
+                        if let Some(mut swap) = self.get_swap(rwtxn, &swap_id)? {
+                            swap.state = SwapState::ReadyToClaim;
+                            self.save_swap(rwtxn, &swap)?;
                         }
                     }
                     TxData::SwapClaim { swap_id, .. } => {

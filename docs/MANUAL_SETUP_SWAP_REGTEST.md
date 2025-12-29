@@ -1,8 +1,8 @@
-## Manual setup (regtest mainchain + regtest parentchain for swaps)
+## Manual setup (BTC regtest mainchain + optional swap parent chain)
 
 This file is a **copy/paste** guide for bringing up:
 - a **regtest mainchain** (where the sidechain is activated via BIP300)
-- a **regtest parentchain** (for swap transactions - Bob sends coins here)
+- a **swap parent chain** (where Bob sends coins; options below)
 - the **bip300301 enforcer** (connected to the mainchain regtest node via RPC/ZMQ)
 - a complete **Alice & Bob swap flow** demonstrating L2 → L1 swaps
 
@@ -12,7 +12,10 @@ This file is a **copy/paste** guide for bringing up:
 
 Notes:
 - This guide uses **descriptor wallets only**.
-- Both chains use regtest for easy local testing.
+- Mainchain uses Bitcoin **regtest** for easy local testing.
+- Swap parent chain options:
+  - **Bitcoin Regtest**: legacy/manual validation via local RPC (`ParentChainType::Regtest`)
+  - **Litecoin Regtest (recommended for Phase 1)**: deterministic SPV proof path (`ParentChainType::LTC`)
 - The mainchain is used for deposits/withdrawals (BIP300 operations).
 - The parentchain is used for swap transactions (coinshift operations).
 
@@ -41,6 +44,16 @@ export PARENTCHAIN_P2P_PORT="38334"
 export PARENTCHAIN_DATADIR="/Users/rob/projects/layertwolabs/coinshift-parentchain-data"
 export PARENTCHAIN_WALLET="parentchainwallet"
 
+# Litecoin regtest (alternative swap parent chain, Phase 1)
+# If you use Litecoin for swaps, you can ignore the Bitcoin parentchain vars above.
+export LITECOIN_DIR="${LITECOIN_DIR:-/Users/rob/projects/layertwolabs/litecoin/build/bin}"
+export LITECOIND="${LITECOIND:-$LITECOIN_DIR/litecoind}"
+export LITECOIN_CLI="${LITECOIN_CLI:-$LITECOIN_DIR/litecoin-cli}"
+export LITECOIN_RPC_PORT="${LITECOIN_RPC_PORT:-19443}"
+export LITECOIN_P2P_PORT="${LITECOIN_P2P_PORT:-39333}"
+export LITECOIN_DATADIR="${LITECOIN_DATADIR:-/Users/rob/projects/layertwolabs/coinshift-litecoin-data}"
+export LITECOIN_WALLET="${LITECOIN_WALLET:-litecoinwallet}"
+
 # Enforcer
 export ENFORCER_GRPC_PORT="50051"
 export ENFORCER_GRPC_ADDR="127.0.0.1:$ENFORCER_GRPC_PORT"
@@ -57,7 +70,7 @@ export ZMQ_RAWTX="tcp://127.0.0.1:29004"
 Create the datadirs:
 
 ```bash
-mkdir -p "$MAINCHAIN_DATADIR" "$PARENTCHAIN_DATADIR"
+mkdir -p "$MAINCHAIN_DATADIR" "$PARENTCHAIN_DATADIR" "$LITECOIN_DATADIR"
 ```
 
 ---
@@ -130,7 +143,11 @@ ADDR=$("$BITCOIN_CLI" -regtest -rpcwait \
 
 ---
 
-### 4) Start parentchain regtest (for swap transactions)
+### 4) Start swap parent chain
+
+You have two options:
+
+#### Option A: Bitcoin regtest parentchain (legacy swap flow)
 
 This is a separate regtest chain used for swap transactions. Bob will send coins here, and Alice will receive them.
 
@@ -191,6 +208,52 @@ ADDR=$("$BITCOIN_CLI" -regtest -rpcwait \
   generatetoaddress 101 "$ADDR"
 ```
 
+#### Option B: Litecoin regtest parent chain (Phase 1 recommended)
+
+This uses a Litecoin regtest node for swap payments. **Coinshift does not trust RPC as a swap oracle for LTC**.
+Instead, you submit an **SPV proof** on-chain (Phase 1). The LTC RPC is used only to **fetch data to build that proof**.
+
+From the repo `docs/` directory, you can use the helper script:
+
+```bash
+./5_start_litecoin.sh
+```
+
+Or manually:
+
+```bash
+"$LITECOIND" -regtest \
+  -fallbackfee=0.0002 \
+  -rpcuser="$RPC_USER" \
+  -rpcpassword="$RPC_PASSWORD" \
+  -rpcport="$LITECOIN_RPC_PORT" \
+  -server -txindex \
+  -listen -port="$LITECOIN_P2P_PORT" \
+  -datadir="$LITECOIN_DATADIR" \
+  -daemon
+
+"$LITECOIN_CLI" -regtest -rpcwait \
+  -rpcuser="$RPC_USER" -rpcpassword="$RPC_PASSWORD" -rpcport="$LITECOIN_RPC_PORT" \
+  -datadir="$LITECOIN_DATADIR" \
+  getblockchaininfo
+
+"$LITECOIN_CLI" -regtest -rpcwait \
+  -rpcuser="$RPC_USER" -rpcpassword="$RPC_PASSWORD" -rpcport="$LITECOIN_RPC_PORT" \
+  -datadir="$LITECOIN_DATADIR" \
+  createwallet "$LITECOIN_WALLET" || true
+
+ADDR=$("$LITECOIN_CLI" -regtest -rpcwait \
+  -rpcuser="$RPC_USER" -rpcpassword="$RPC_PASSWORD" -rpcport="$LITECOIN_RPC_PORT" \
+  -datadir="$LITECOIN_DATADIR" \
+  -rpcwallet="$LITECOIN_WALLET" \
+  getnewaddress)
+
+"$LITECOIN_CLI" -regtest -rpcwait \
+  -rpcuser="$RPC_USER" -rpcpassword="$RPC_PASSWORD" -rpcport="$LITECOIN_RPC_PORT" \
+  -datadir="$LITECOIN_DATADIR" \
+  generatetoaddress 101 "$ADDR"
+```
+
 ---
 
 ### 7) Start the enforcer (for mainchain)
@@ -247,28 +310,41 @@ Check the enforcer logs or use the gRPC API to check proposal status.
 
 ---
 
-### 9b) Configure parentchain RPC in coinshift app
+### 9b) Configure L1 RPC in coinshift app (for swaps)
 
-**Important**: The coinshift app needs to know how to connect to the parentchain regtest node to monitor swap transactions. You need to configure the RPC settings for `ParentChainType::Regtest` in the coinshift app.
+Coinshift stores per-chain RPC configs at:
+- macOS: `~/Library/Application Support/coinshift/l1_rpc_configs.json`
+- Linux: `~/.local/share/coinshift/l1_rpc_configs.json`
 
-This is typically done via the app's GUI (L1 Config section) or via configuration file. The RPC URL should point to the parentchain regtest node:
+You can set these via the GUI **L1 Config** tab (recommended).
 
+#### If your swap `parent_chain` is `Regtest` (Bitcoin regtest parentchain)
+
+Configure:
+- **Parent Chain**: `Regtest`
 - **RPC URL**: `http://127.0.0.1:$PARENTCHAIN_RPC_PORT`
 - **RPC User**: `$RPC_USER`
 - **RPC Password**: `$RPC_PASSWORD`
-- **Parent Chain**: `Regtest`
 
-**Note**: The system uses this RPC configuration to query the parentchain for transactions matching pending swaps when processing 2WPD.
+#### If your swap `parent_chain` is `LTC` (Litecoin regtest)
+
+Configure:
+- **Parent Chain**: `LTC`
+- **RPC URL**: `http://127.0.0.1:$LITECOIN_RPC_PORT`
+- **RPC User**: `$RPC_USER`
+- **RPC Password**: `$RPC_PASSWORD`
+
+**Important (LTC)**: This RPC is **not** used as a consensus oracle. It is only used to fetch tx/header data to build an SPV proof that the sidechain verifies deterministically.
 
 #### 9c) Start the Coinshift Sidechain Node
 
 After configuring the parentchain RPC, start the coinshift node (sidechain app). If you've built the Rust binary, run:
 
 ```bash
-./target/release/coinshift --network regtest
+./target/release/coinshift_app --datadir "$COINSHIFT_DATADIR"
 ```
 
-Or, if using a different build path/location, substitute accordingly. The node will listen for swaps and process 2WPD data for the parentchain you configured in the previous step.
+Or, if using a different build path/location, substitute accordingly. The node exposes JSON-RPC and (in GUI mode) provides a swap UI for submitting LTC proofs.
 
 You should see logs indicating connection to both mainchain and parentchain regtest nodes, and readiness for swaps.
 

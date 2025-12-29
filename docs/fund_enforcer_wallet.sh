@@ -18,16 +18,19 @@
 # Exit on error
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/_env.sh"
+
 # Default amount
 AMOUNT="${1:-1.0}"
 
 # Bitcoin Core settings (should match 1_start_mainchain.sh)
-export BITCOIN_DIR="/home/parallels/Projects/bitcoin-patched/build/bin"
+export BITCOIN_DIR="${PROJECT_ROOT}/bitcoin-patched/build/bin"
 export BITCOIN_CLI="$BITCOIN_DIR/bitcoin-cli"
 export RPC_USER="user"
 export RPC_PASSWORD="passwordDC"
 export MAINCHAIN_RPC_PORT="18443"
-export MAINCHAIN_DATADIR="/home/parallels/Projects/coinshift-mainchain-data"
+export MAINCHAIN_DATADIR="${PROJECT_ROOT}/coinshift-mainchain-data"
 export MAINCHAIN_WALLET="mainchainwallet"
 
 # Enforcer gRPC settings (should match 3_start_enforcer.sh)

@@ -45,6 +45,11 @@ pub struct TransactionInfo {
     pub txid: String,
     pub confirmations: u32,
     pub blockheight: Option<u32>,
+    #[serde(default)]
+    pub blockhash: Option<String>,
+    /// Present in `getrawtransaction` verbose output.
+    #[serde(default)]
+    pub hex: Option<String>,
     pub vout: Vec<Vout>,
     pub vin: Vec<Vin>,
 }
@@ -71,6 +76,18 @@ pub struct Vin {
 pub struct BitcoinRpcClient {
     config: RpcConfig,
     client: reqwest::blocking::Client,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockHeaderInfo {
+    pub hash: String,
+    pub height: u32,
+    pub time: u32,
+    pub bits: String,
+    #[serde(default)]
+    pub previousblockhash: Option<String>,
+    #[serde(rename = "merkleroot")]
+    pub merkle_root: String,
 }
 
 impl BitcoinRpcClient {
@@ -268,6 +285,43 @@ impl BitcoinRpcClient {
             .and_then(|v| v.as_u64())
             .ok_or(Error::InvalidResponse)?;
         Ok(blocks as u32)
+    }
+
+    /// Get best block height.
+    pub fn get_block_count(&self) -> Result<u32, Error> {
+        self.call::<u32>("getblockcount", json!([]))
+    }
+
+    pub fn get_block_hash(&self, height: u32) -> Result<String, Error> {
+        self.call::<String>("getblockhash", json!([height]))
+    }
+
+    /// Get raw block header as hex (80 bytes).
+    pub fn get_block_header_hex(&self, blockhash: &str) -> Result<String, Error> {
+        self.call::<String>("getblockheader", json!([blockhash, false]))
+    }
+
+    pub fn get_block_header_info(
+        &self,
+        blockhash: &str,
+    ) -> Result<BlockHeaderInfo, Error> {
+        self.call::<BlockHeaderInfo>("getblockheader", json!([blockhash, true]))
+    }
+
+    pub fn get_raw_transaction_hex(&self, txid: &str) -> Result<String, Error> {
+        self.call::<String>("getrawtransaction", json!([txid, false]))
+    }
+
+    pub fn get_block_txids(&self, blockhash: &str) -> Result<Vec<String>, Error> {
+        let v: serde_json::Value = self.call("getblock", json!([blockhash, 1]))?;
+        let tx = v
+            .get("tx")
+            .and_then(|t| t.as_array())
+            .ok_or(Error::InvalidResponse)?;
+        Ok(tx
+            .iter()
+            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+            .collect())
     }
 
     /// Find transactions to an address matching a specific amount

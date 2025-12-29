@@ -103,6 +103,37 @@ pub struct Wallet {
 }
 
 impl Wallet {
+    fn create_metadata_tx(
+        &self,
+        accumulator: &Accumulator,
+        fee: bitcoin::Amount,
+        data: TxData,
+    ) -> Result<Transaction, Error> {
+        // Select coins for fee only.
+        let (total, coins) = self.select_coins(fee)?;
+        let change = total - fee;
+        let inputs: Vec<_> = coins
+            .into_iter()
+            .map(|(outpoint, output)| {
+                let utxo_hash = hash(&PointedOutput { outpoint, output });
+                (outpoint, utxo_hash)
+            })
+            .collect();
+        let input_utxo_hashes: Vec<BitcoinNodeHash> =
+            inputs.iter().map(|(_, hash)| hash.into()).collect();
+        let proof = accumulator.prove(&input_utxo_hashes)?;
+        let outputs = vec![Output {
+            address: self.get_new_address()?,
+            content: OutputContent::Value(change),
+        }];
+        Ok(Transaction {
+            inputs,
+            proof,
+            outputs,
+            data,
+        })
+    }
+
     pub const NUM_DBS: u32 = 6;
 
     pub fn new(path: &Path) -> Result<Self, Error> {
@@ -460,6 +491,24 @@ impl Wallet {
         };
 
         Ok(tx)
+    }
+
+    /// Create a SwapSubmitProof transaction (Phase 1+).
+    pub fn create_swap_submit_proof_tx(
+        &self,
+        accumulator: &Accumulator,
+        swap_id: SwapId,
+        proof: Vec<u8>,
+        fee: bitcoin::Amount,
+    ) -> Result<Transaction, Error> {
+        self.create_metadata_tx(
+            accumulator,
+            fee,
+            TxData::SwapSubmitProof {
+                swap_id: swap_id.0,
+                proof,
+            },
+        )
     }
 
     pub fn create_transaction(

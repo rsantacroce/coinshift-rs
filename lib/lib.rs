@@ -8,6 +8,7 @@ pub mod mempool;
 pub mod miner;
 pub mod net;
 pub mod node;
+pub mod spv;
 pub mod state;
 pub mod types;
 pub mod util;

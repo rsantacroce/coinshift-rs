@@ -97,6 +97,21 @@ pub enum Command {
         #[arg(long)]
         mainchain_fee_sats: u64,
     },
+    /// Build a Litecoin SPV proof blob (borsh-encoded) for `SwapSubmitProof`.
+    ///
+    /// This uses an LTC Core compatible JSON-RPC endpoint as a *data source*.
+    BuildLtcSpvProof {
+        #[arg(long)]
+        ltc_rpc_url: String,
+        #[arg(long, default_value = "")]
+        ltc_rpc_user: String,
+        #[arg(long, default_value = "")]
+        ltc_rpc_password: String,
+        #[arg(long)]
+        txid: String,
+        #[arg(long, default_value_t = 6)]
+        min_confirmations: u32,
+    },
 }
 
 #[derive(Clone, Debug, Parser)]
@@ -128,6 +143,25 @@ where
     RpcClient: ClientT + Sync,
 {
     Ok(match command {
+        Command::BuildLtcSpvProof {
+            ltc_rpc_url,
+            ltc_rpc_user,
+            ltc_rpc_password,
+            txid,
+            min_confirmations,
+        } => {
+            let rpc = coinshift::bitcoin_rpc::RpcConfig {
+                url: ltc_rpc_url,
+                user: ltc_rpc_user,
+                password: ltc_rpc_password,
+            };
+            let bytes = coinshift::spv::ltc_builder::build_ltc_spv_proof_v2_bytes(
+                &rpc,
+                &txid,
+                min_confirmations,
+            )?;
+            hex::encode(bytes)
+        }
         Command::Balance => {
             let balance = rpc_client.balance().await?;
             serde_json::to_string_pretty(&balance)?

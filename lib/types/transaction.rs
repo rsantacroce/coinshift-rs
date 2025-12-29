@@ -528,6 +528,24 @@ pub enum TxData {
         l1_recipient_address: Option<String>,
         l1_amount: Option<u64>,
     },
+    /// Phase 1+: Register a candidate L1 payment for a swap (starts dispute window).
+    ///
+    /// `tx_ref_bytes` is chain-specific. For LTC/ZEC (transparent) this is the 32-byte txid.
+    SwapRegisterPayment {
+        swap_id: [u8; 32],
+        tx_ref_bytes: Vec<u8>,
+    },
+    /// Phase 1+: Alice-only veto during dispute window.
+    SwapDisputePayment {
+        swap_id: [u8; 32],
+    },
+    /// Phase 1+: Submit a deterministic proof that the L1 payment exists and matches swap terms.
+    ///
+    /// Proof format is chain-specific and versioned by the proof itself.
+    SwapSubmitProof {
+        swap_id: [u8; 32],
+        proof: Vec<u8>,
+    },
     /// Swap claim transaction
     SwapClaim {
         swap_id: [u8; 32],

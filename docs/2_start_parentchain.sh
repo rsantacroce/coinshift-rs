@@ -6,7 +6,7 @@
 #   RPC: 18444
 #   P2P: 38334
 #
-# Data directory: /home/parallels/Projects/coinshift-parentchain-data
+# Data directory: $PROJECT_ROOT/coinshift-parentchain-data
 #
 # NOTE: These ports are DIFFERENT from mainchain to avoid conflicts
 #
@@ -14,7 +14,10 @@
 # Exit on error
 set -e
 
-export BITCOIN_DIR="/home/parallels/Projects/bitcoin-patched/build/bin"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/_env.sh"
+
+export BITCOIN_DIR="${PROJECT_ROOT}/bitcoin-patched/build/bin"
 export BITCOIND="$BITCOIN_DIR/bitcoind"
 export BITCOIN_CLI="$BITCOIN_DIR/bitcoin-cli"
 export RPC_USER="user"
@@ -23,7 +26,7 @@ export RPC_PASSWORD="passwordDC"
 # Parentchain regtest (for swap transactions)
 export PARENTCHAIN_RPC_PORT="18444"
 export PARENTCHAIN_P2P_PORT="38334"
-export PARENTCHAIN_DATADIR="/home/parallels/Projects/coinshift-parentchain-data"
+export PARENTCHAIN_DATADIR="${PROJECT_ROOT}/coinshift-parentchain-data"
 export PARENTCHAIN_WALLET="parentchainwallet"
 
 echo "=========================================="

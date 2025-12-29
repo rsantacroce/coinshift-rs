@@ -698,6 +698,21 @@ fn process_coinshift_transactions(
             }
         }
 
+        // Safety: Do NOT advance swaps for non-Bitcoin networks using a local RPC endpoint.
+        //
+        // Rationale:
+        // - Local RPC responses are not a deterministic consensus input.
+        // - For non-Bitcoin networks (e.g., LTC) we will advance swaps via on-chain proofs
+        //   and dispute games (Phase 1+). Until then, we keep these swaps in Pending.
+        if !swap.parent_chain.supports_bitcoin_core_rpc_validation() {
+            tracing::debug!(
+                swap_id = %swap.id,
+                parent_chain = ?swap.parent_chain,
+                "Skipping RPC-based swap scanning for this parent chain; requires on-chain proof (Phase 1+)"
+            );
+            continue;
+        }
+
         // For L2 → L1 swaps, we need to check if the L1 transaction exists
         // on the SWAP TARGET CHAIN (swap.parent_chain), NOT the sidechain's mainchain.
         //

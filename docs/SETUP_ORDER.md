@@ -47,6 +47,30 @@ cd /home/parallels/Projects/coinshift-rs/docs
 
 ---
 
+### Step 2b: (Optional) Start Litecoin Regtest Node (swap parent chain)
+
+**Script:** `5_start_litecoin.sh`
+
+```bash
+./5_start_litecoin.sh
+```
+
+**What it does:**
+- Starts a **Litecoin regtest** node (litecoind)
+- Creates a wallet (`litecoinwallet`)
+- Mines initial blocks to mature coinbase
+
+**Helper scripts:**
+```bash
+./5a_litecoin_generate_address.sh
+./5b_litecoin_check_balance.sh
+./5c_mine_litecoin.sh 10
+```
+
+**Note:** Only needed if you're testing LTC swap flows / SPV proof work. It’s independent from the Bitcoin regtest nodes.
+
+---
+
 ### Step 3: Start Enforcer
 
 **Script:** `3_start_enforcer.sh`
@@ -229,6 +253,9 @@ cd /home/parallels/Projects/coinshift-rs/docs
     └─> (no dependencies)
 
 2_start_parentchain.sh
+    └─> (no dependencies, optional)
+
+5_start_litecoin.sh
     └─> (no dependencies, optional)
 
 3_start_enforcer.sh

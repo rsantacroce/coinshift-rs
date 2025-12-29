@@ -138,8 +138,17 @@ impl L1Config {
 
     fn check_connection(&mut self, url: &str, user: &str, password: &str) {
         if url.is_empty() {
+            tracing::warn!("check_connection called with empty URL");
             return;
         }
+
+        let parent_chain = self.selected_parent_chain;
+        tracing::info!(
+            parent_chain = ?parent_chain,
+            url = %url,
+            user = %user,
+            "Checking L1 RPC connection"
+        );
 
         let url = url.to_string();
         let user = user.to_string();
@@ -158,9 +167,19 @@ impl L1Config {
     fn fetch_block_height(url: &str, user: &str, password: &str) -> anyhow::Result<u64> {
         use std::time::Duration;
         
+        tracing::debug!(
+            url = %url,
+            has_user = !user.is_empty(),
+            "Starting RPC request to getblockchaininfo"
+        );
+        
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(5))
-            .build()?;
+            .build()
+            .map_err(|e| {
+                tracing::error!(error = %e, "Failed to create HTTP client");
+                e
+            })?;
         
         let request = json!({
             "jsonrpc": "2.0",
@@ -169,40 +188,92 @@ impl L1Config {
             "params": []
         });
 
+        if let Ok(request_str) = serde_json::to_string(&request) {
+            tracing::debug!(request = %request_str, "Sending RPC request");
+        }
+
         let mut request_builder = client.post(url).json(&request);
         
         // Add HTTP basic authentication if user and password are provided
         if !user.is_empty() {
             request_builder = request_builder.basic_auth(user, Some(password));
+            tracing::debug!("Added HTTP basic authentication");
         }
 
-        let response = request_builder.send()?;
+        let response = request_builder.send().map_err(|e| {
+            tracing::error!(
+                url = %url,
+                error = %e,
+                error_debug = ?e,
+                "Failed to send RPC request"
+            );
+            e
+        })?;
 
-        let json: serde_json::Value = response.json()?;
+        let status = response.status();
+        tracing::debug!(status = %status, "Received HTTP response");
+
+        let json: serde_json::Value = response.json().map_err(|e| {
+            tracing::error!(
+                error = %e,
+                error_debug = ?e,
+                "Failed to parse JSON response"
+            );
+            e
+        })?;
         
+        if let Ok(response_str) = serde_json::to_string_pretty(&json) {
+            tracing::debug!(response = %response_str, "RPC response received");
+        } else {
+            tracing::debug!("RPC response received (failed to serialize for logging)");
+        }
+        
+        // In JSON-RPC 2.0, error is null when there's no error, and an object when there is an error
         if let Some(error) = json.get("error") {
-            anyhow::bail!("RPC error: {}", error);
+            if !error.is_null() {
+                tracing::error!(error = %error, "RPC returned an error");
+                anyhow::bail!("RPC error: {}", error);
+            }
         }
         
         let result = json.get("result")
-            .ok_or_else(|| anyhow::anyhow!("No result in response"))?;
+            .ok_or_else(|| {
+                tracing::error!("No 'result' field in RPC response");
+                anyhow::anyhow!("No result in response")
+            })?;
         
         let blocks = result.get("blocks")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| anyhow::anyhow!("No blocks field in response"))?;
+            .ok_or_else(|| {
+                tracing::error!(result = ?result, "No 'blocks' field in RPC result");
+                anyhow::anyhow!("No blocks field in response")
+            })?;
         
+        tracing::info!(blocks = blocks, "Successfully fetched block height from RPC");
         Ok(blocks)
     }
 
     fn update_status(&mut self) {
         if let Some(promise) = &self.status_promise {
             if let Some(result) = promise.ready() {
+                let parent_chain = self.selected_parent_chain;
                 match result {
                     Ok(block_height) => {
+                        tracing::info!(
+                            parent_chain = ?parent_chain,
+                            block_height = block_height,
+                            "L1 RPC connection check succeeded"
+                        );
                         *self.connection_status.lock().unwrap() = 
                             ConnectionStatus::Connected { block_height: *block_height };
                     }
                     Err(err) => {
+                        tracing::error!(
+                            parent_chain = ?parent_chain,
+                            error = %err,
+                            error_debug = ?err,
+                            "L1 RPC connection check failed"
+                        );
                         *self.connection_status.lock().unwrap() = 
                             ConnectionStatus::Disconnected { 
                                 error: format!("{err:#}") 
@@ -235,6 +306,7 @@ impl L1Config {
                     ui.selectable_value(&mut self.selected_parent_chain, ParentChainType::Regtest, "Regtest");
                     ui.selectable_value(&mut self.selected_parent_chain, ParentChainType::BCH, "BCH");
                     ui.selectable_value(&mut self.selected_parent_chain, ParentChainType::LTC, "LTC");
+                    ui.selectable_value(&mut self.selected_parent_chain, ParentChainType::ZEC, "ZEC (transparent)");
                 });
             
             // Load config when parent chain changes
@@ -316,6 +388,11 @@ impl L1Config {
                             ui.label(RichText::new("●").color(Color32::GRAY));
                             ui.label("Status: Unknown");
                             if ui.button("Check Connection").clicked() {
+                                tracing::info!(
+                                    parent_chain = ?self.selected_parent_chain,
+                                    url = %url,
+                                    "User clicked Check Connection button"
+                                );
                                 self.check_connection(&url, &user, &password);
                             }
                         });
@@ -340,6 +417,11 @@ impl L1Config {
                         let user = saved_config.user.clone();
                         let password = saved_config.password.clone();
                         if ui.button("Refresh").clicked() {
+                            tracing::info!(
+                                parent_chain = ?self.selected_parent_chain,
+                                url = %url,
+                                "User clicked Refresh button to check L1 RPC connection"
+                            );
                             self.check_connection(&url, &user, &password);
                         }
                     }
@@ -358,6 +440,11 @@ impl L1Config {
                         let user = saved_config.user.clone();
                         let password = saved_config.password.clone();
                         if ui.button("Retry").clicked() {
+                            tracing::info!(
+                                parent_chain = ?self.selected_parent_chain,
+                                url = %url,
+                                "User clicked Retry button to check L1 RPC connection"
+                            );
                             self.check_connection(&url, &user, &password);
                         }
                     }

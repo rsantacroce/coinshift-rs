@@ -110,6 +110,8 @@ pub enum ParentChainType {
     BCH,
     /// Litecoin
     LTC,
+    /// Zcash (transparent)
+    ZEC,
     /// Bitcoin Signet (for cross-chain swaps)
     Signet,
     /// Bitcoin Regtest (for testing)
@@ -121,7 +123,7 @@ impl ParentChainType {
     pub fn default_confirmations(&self) -> u32 {
         match self {
             Self::BTC => 6,
-            Self::BCH | Self::LTC | Self::Signet | Self::Regtest => 3,
+            Self::BCH | Self::LTC | Self::ZEC | Self::Signet | Self::Regtest => 3,
         }
     }
 
@@ -131,11 +133,25 @@ impl ParentChainType {
             Self::BTC => bitcoin::Network::Bitcoin,
             Self::Signet => bitcoin::Network::Signet,
             Self::Regtest => bitcoin::Network::Regtest,
-            Self::BCH | Self::LTC => {
+            Self::BCH | Self::LTC | Self::ZEC => {
                 // BCH and LTC are separate networks, would need separate handling
                 bitcoin::Network::Bitcoin // Placeholder
             }
         }
+    }
+
+    /// Whether this chain is safe to validate using the current `BitcoinRpcClient`.
+    ///
+    /// Important:
+    /// - `BitcoinRpcClient` speaks Bitcoin Core JSON-RPC and assumes Bitcoin-like semantics.
+    /// - Using a locally configured RPC endpoint as a *consensus input* is unsafe: peers may
+    ///   consult different endpoints and disagree.
+    ///
+    /// Today we only allow this convenience path for Bitcoin networks used by the sidechain
+    /// ecosystem (BTC/Signet/Regtest). Other chains (e.g. LTC/ZEC/ETH/XMR in future) must be
+    /// advanced via deterministic on-chain proofs (Phase 1+).
+    pub fn supports_bitcoin_core_rpc_validation(&self) -> bool {
+        matches!(self, Self::BTC | Self::Signet | Self::Regtest)
     }
 }
 
@@ -268,9 +284,13 @@ pub struct Swap {
     pub id: SwapId,
     pub direction: SwapDirection,
     pub parent_chain: ParentChainType,
+    /// L2 sender (swap creator). Used for Alice-only dispute rules in Phase 1+.
+    pub l2_sender: Address,
     pub l1_txid: SwapTxId,
     pub required_confirmations: u32,
     pub state: SwapState,
+    /// Phase 1+: whether Alice has disputed the registered payment.
+    pub is_disputed: bool,
     /// L2 recipient address. None means open swap (anyone can fill)
     pub l2_recipient: Option<Address>,
     #[serde(with = "bitcoin::amount::serde::as_sat")]
@@ -298,9 +318,11 @@ impl BorshSerialize for Swap {
         BorshSerialize::serialize(&self.id, writer)?;
         BorshSerialize::serialize(&self.direction, writer)?;
         BorshSerialize::serialize(&self.parent_chain, writer)?;
+        BorshSerialize::serialize(&self.l2_sender, writer)?;
         BorshSerialize::serialize(&self.l1_txid, writer)?;
         BorshSerialize::serialize(&self.required_confirmations, writer)?;
         BorshSerialize::serialize(&self.state, writer)?;
+        BorshSerialize::serialize(&self.is_disputed, writer)?;
         BorshSerialize::serialize(&self.l2_recipient, writer)?;
         // Serialize Amount as u64
         BorshSerialize::serialize(&self.l2_amount.to_sat(), writer)?;
@@ -322,9 +344,11 @@ impl BorshDeserialize for Swap {
             id: BorshDeserialize::deserialize_reader(reader)?,
             direction: BorshDeserialize::deserialize_reader(reader)?,
             parent_chain: BorshDeserialize::deserialize_reader(reader)?,
+            l2_sender: BorshDeserialize::deserialize_reader(reader)?,
             l1_txid: BorshDeserialize::deserialize_reader(reader)?,
             required_confirmations: BorshDeserialize::deserialize_reader(reader)?,
             state: BorshDeserialize::deserialize_reader(reader)?,
+            is_disputed: BorshDeserialize::deserialize_reader(reader)?,
             l2_recipient: BorshDeserialize::deserialize_reader(reader)?,
             // Deserialize u64 and convert to Amount
             l2_amount: bitcoin::Amount::from_sat(BorshDeserialize::deserialize_reader(reader)?),
@@ -346,6 +370,7 @@ impl Swap {
         id: SwapId,
         direction: SwapDirection,
         parent_chain: ParentChainType,
+        l2_sender: Address,
         l1_txid: SwapTxId,
         required_confirmations: Option<u32>,
         l2_recipient: Option<Address>,
@@ -361,9 +386,11 @@ impl Swap {
             id,
             direction,
             parent_chain,
+            l2_sender,
             l1_txid,
             required_confirmations,
             state: SwapState::Pending,
+            is_disputed: false,
             l2_recipient,
             l2_amount,
             l1_recipient_address,

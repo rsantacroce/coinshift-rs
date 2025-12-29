@@ -1,9 +1,11 @@
 use eframe::egui::{self, Button, ScrollArea};
 use coinshift::types::{Address, Swap, SwapId, SwapState, SwapTxId, ParentChainType};
 use coinshift::bitcoin_rpc::{BitcoinRpcClient, RpcConfig};
+use poll_promise::Promise;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use hex;
+use anyhow;
 
 use crate::app::App;
 use crate::gui::util::show_btc_amount;
@@ -22,16 +24,23 @@ pub struct SwapList {
     swaps: Option<Vec<Swap>>,
     selected_swap_id: Option<String>,
     l1_txid_input: String,
+    ltc_min_confirmations_input: String,
+    ltc_proof_fee_sats_input: String,
     l2_recipient_input: String,  // L2 address that will receive the L2 amount (for L1 transaction detection)
     fetching_confirmations: bool,
     claimer_address_input: String,  // L2 claimer address when claiming (for open swaps)
     last_confirmation_check: Option<Instant>,
     checking_confirmations: bool,
     success_message: Option<String>,  // Success message after claiming (contains txid)
+    action_error: Option<String>,
     swap_id_search: String,  // Swap ID search input field
     searched_swap: Option<Swap>,  // Swap found by search
     status_filter: SwapStatusFilter,  // Filter swaps by status
     search_error: Option<String>,  // Error message for search
+
+    building_ltc_proof: bool,
+    ltc_proof_promise: Option<Promise<anyhow::Result<Vec<u8>>>>,
+    ltc_proof_pending_swap_id: Option<SwapId>,
 }
 
 impl Default for SwapList {
@@ -40,16 +49,23 @@ impl Default for SwapList {
             swaps: None,
             selected_swap_id: None,
             l1_txid_input: String::new(),
+            ltc_min_confirmations_input: "6".to_string(),
+            ltc_proof_fee_sats_input: "1000".to_string(),
             l2_recipient_input: String::new(),
             fetching_confirmations: false,
             claimer_address_input: String::new(),
             last_confirmation_check: None,
             checking_confirmations: false,
             success_message: None,
+            action_error: None,
             swap_id_search: String::new(),
             searched_swap: None,
             status_filter: SwapStatusFilter::All,
             search_error: None,
+
+            building_ltc_proof: false,
+            ltc_proof_promise: None,
+            ltc_proof_pending_swap_id: None,
         }
     }
 }
@@ -106,6 +122,7 @@ impl SwapList {
                             swap_id_obj,
                             coinshift::types::SwapDirection::L2ToL1,
                             *parent_chain,
+                            coinshift::types::Address::ALL_ZEROS,
                             l1_txid,
                             Some(*required_confirmations),
                             *l2_recipient,
@@ -130,6 +147,78 @@ impl SwapList {
     }
 
     pub fn show(&mut self, app: Option<&App>, ui: &mut egui::Ui) {
+        // Complete LTC proof promise if running
+        if let Some(p) = self.ltc_proof_promise.take() {
+            if let Some(res) = p.ready() {
+                self.building_ltc_proof = false;
+                match res {
+                    Ok(proof_bytes) => {
+                        let proof_bytes = proof_bytes.clone();
+                        let Some(app) = app else {
+                            self.action_error =
+                                Some("App not available to submit proof".to_string());
+                            return;
+                        };
+                        // Build + send SwapSubmitProof on the UI thread (wallet is not Send).
+                        let fee_sats: u64 = match self.ltc_proof_fee_sats_input.trim().parse() {
+                            Ok(v) => v,
+                            Err(_) => {
+                                self.action_error = Some("Invalid fee sats".to_string());
+                                return;
+                            }
+                        };
+                        let swap_id = match self.ltc_proof_pending_swap_id.take() {
+                            Some(id) => id,
+                            None => {
+                                self.action_error =
+                                    Some("No pending swap id for LTC proof".to_string());
+                                return;
+                            }
+                        };
+                        let accumulator = match app.node.get_tip_accumulator() {
+                            Ok(a) => a,
+                            Err(err) => {
+                                self.action_error =
+                                    Some(format!("Failed to get accumulator: {err:#}"));
+                                return;
+                            }
+                        };
+                        let tx = match app.wallet.create_swap_submit_proof_tx(
+                            &accumulator,
+                            swap_id,
+                            proof_bytes,
+                            bitcoin::Amount::from_sat(fee_sats),
+                        ) {
+                            Ok(tx) => tx,
+                            Err(err) => {
+                                self.action_error =
+                                    Some(format!("Failed to build proof tx: {err:#}"));
+                                return;
+                            }
+                        };
+                        let txid = tx.txid();
+                        if let Err(err) = app.sign_and_send(tx) {
+                            self.action_error =
+                                Some(format!("Failed to submit proof tx: {err:#}"));
+                            return;
+                        }
+                        self.success_message =
+                            Some(format!("Submitted LTC proof! txid={txid}"));
+                        self.refresh_swaps(app);
+                    }
+                    Err(err) => {
+                        self.building_ltc_proof = false;
+                        self.ltc_proof_pending_swap_id = None;
+                        self.action_error =
+                            Some(format!("Failed to build LTC proof: {err:#}"));
+                    }
+                }
+            } else {
+                // Not ready yet, put it back.
+                self.ltc_proof_promise = Some(p);
+            }
+        }
+
         // Periodically check confirmations for swaps in WaitingConfirmations state
         // Check every 10 seconds
         let should_check = self.last_confirmation_check
@@ -161,6 +250,15 @@ impl SwapList {
                 ui.label(egui::RichText::new(msg).color(egui::Color32::GREEN));
                 if ui.button("✕").clicked() {
                     self.success_message = None;
+                }
+            });
+            ui.separator();
+        }
+        if let Some(err) = self.action_error.clone() {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format!("❌ {}", err)).color(egui::Color32::RED));
+                if ui.button("✕").clicked() {
+                    self.action_error = None;
                 }
             });
             ui.separator();
@@ -404,32 +502,74 @@ impl SwapList {
                         // For pre-specified swaps, this field can be left empty (swap already has l2_recipient)
                         
                         ui.horizontal(|ui| {
-                            if ui
-                                .add_enabled(
-                                    app.is_some() && !self.l1_txid_input.is_empty(),
-                                    Button::new("Update Swap (Auto-fetch confirmations from RPC)"),
-                                )
-                                .clicked()
-                            {
-                                if let Some(app) = app {
-                                    self.update_swap_with_auto_confirmations(app, &swap);
+                            if swap.parent_chain == ParentChainType::LTC {
+                                ui.label("min conf:");
+                                ui.add(
+                                    egui::TextEdit::singleline(
+                                        &mut self.ltc_min_confirmations_input,
+                                    )
+                                    .desired_width(40.0),
+                                );
+                                ui.label("fee sats:");
+                                ui.add(
+                                    egui::TextEdit::singleline(
+                                        &mut self.ltc_proof_fee_sats_input,
+                                    )
+                                    .desired_width(70.0),
+                                );
+                                if ui
+                                    .add_enabled(
+                                        app.is_some()
+                                            && !self.l1_txid_input.is_empty()
+                                            && !self.building_ltc_proof,
+                                        Button::new("Build & Submit LTC Proof"),
+                                    )
+                                    .clicked()
+                                {
+                                    if let Some(app) = app {
+                                        self.build_and_submit_ltc_proof(app, &swap);
+                                    }
                                 }
-                            }
-                            
-                            if ui
-                                .add_enabled(
-                                    app.is_some() && !self.l1_txid_input.is_empty(),
-                                    Button::new("Fetch Confirmations Only"),
-                                )
-                                .clicked()
-                            {
-                                if let Some(app) = app {
-                                    self.fetch_confirmations_from_rpc(app, &swap);
+                            } else {
+                                if ui
+                                    .add_enabled(
+                                        app.is_some() && !self.l1_txid_input.is_empty(),
+                                        Button::new(
+                                            "Update Swap (Auto-fetch confirmations from RPC)",
+                                        ),
+                                    )
+                                    .clicked()
+                                {
+                                    if let Some(app) = app {
+                                        self.update_swap_with_auto_confirmations(app, &swap);
+                                    }
+                                }
+                                
+                                if ui
+                                    .add_enabled(
+                                        app.is_some() && !self.l1_txid_input.is_empty(),
+                                        Button::new("Fetch Confirmations Only"),
+                                    )
+                                    .clicked()
+                                {
+                                    if let Some(app) = app {
+                                        self.fetch_confirmations_from_rpc(app, &swap);
+                                    }
                                 }
                             }
                         });
                         
-                        ui.label(egui::RichText::new("Note: Confirmations will be automatically fetched from the L1 RPC node if configured in L1 Config.").small().color(egui::Color32::GRAY));
+                        if swap.parent_chain == ParentChainType::LTC {
+                            ui.label(
+                                egui::RichText::new(
+                                    "For LTC, we do not trust RPC as an oracle. The RPC is only used to *fetch data* to build an SPV proof, which the sidechain verifies deterministically.",
+                                )
+                                .small()
+                                .color(egui::Color32::GRAY),
+                            );
+                        } else {
+                            ui.label(egui::RichText::new("Note: Confirmations will be automatically fetched from the L1 RPC node if configured in L1 Config.").small().color(egui::Color32::GRAY));
+                        }
                     });
                 }
                 SwapState::ReadyToClaim => {
@@ -686,6 +826,7 @@ impl SwapList {
                                         swap_id,
                                         coinshift::types::SwapDirection::L2ToL1,
                                         *parent_chain,
+                                        coinshift::types::Address::ALL_ZEROS,
                                         l1_txid,
                                         Some(*required_confirmations),
                                         *l2_recipient,
@@ -1014,6 +1155,15 @@ impl SwapList {
         };
         let l1_txid = SwapTxId::from_bytes(&l1_txid_bytes);
 
+        if !swap.parent_chain.supports_bitcoin_core_rpc_validation() {
+            tracing::error!(
+                swap_id = %swap.id,
+                parent_chain = ?swap.parent_chain,
+                "Cannot validate/update swap via local RPC for this parent chain. This requires Phase 1+ on-chain proofs."
+            );
+            return;
+        }
+
         // Fetch transaction from RPC to validate amount and recipient address
         let confirmations = if let Some(rpc_config) = self.load_rpc_config(swap.parent_chain) {
             tracing::debug!(
@@ -1167,6 +1317,52 @@ impl SwapList {
         self.l1_txid_input.clear();
         self.l2_recipient_input.clear();
         self.refresh_swaps(app);
+    }
+
+    fn build_and_submit_ltc_proof(&mut self, _app: &App, swap: &Swap) {
+        self.action_error = None;
+        self.success_message = None;
+
+        let txid_hex = self.l1_txid_input.trim().to_string();
+        if txid_hex.is_empty() {
+            self.action_error = Some("Missing txid".to_string());
+            return;
+        }
+        let min_confs: u32 = match self.ltc_min_confirmations_input.trim().parse() {
+            Ok(v) => v,
+            Err(_) => {
+                self.action_error = Some("Invalid min confirmations".to_string());
+                return;
+            }
+        };
+        let _fee_sats: u64 = match self.ltc_proof_fee_sats_input.trim().parse() {
+            Ok(v) => v,
+            Err(_) => {
+                self.action_error = Some("Invalid fee sats".to_string());
+                return;
+            }
+        };
+        let rpc = match self.load_rpc_config(ParentChainType::LTC) {
+            Some(c) => c,
+            None => {
+                self.action_error =
+                    Some("No LTC RPC config available (set it in L1 Config)".to_string());
+                return;
+            }
+        };
+        let swap_id = swap.id;
+
+        self.building_ltc_proof = true;
+        self.ltc_proof_pending_swap_id = Some(swap_id);
+        self.ltc_proof_promise = Some(Promise::spawn_thread("ltc_spv_proof", move || {
+            let proof_bytes = coinshift::spv::ltc_builder::build_ltc_spv_proof_v2_bytes(
+                &rpc,
+                &txid_hex,
+                min_confs,
+            )
+            .map_err(|e| anyhow::anyhow!(e))?;
+            Ok(proof_bytes)
+        }));
     }
 
     fn cancel_swap(&mut self, app: &App, swap_id: &SwapId) {
