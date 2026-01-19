@@ -1,3 +1,6 @@
+use bip300301_enforcer_integration_tests::util::{
+    TestFailureCollector, TestFileRegistry,
+};
 use clap::Parser;
 use std::collections::HashSet;
 use tracing_subscriber::{filter as tracing_filter, layer::SubscriberExt};
@@ -102,10 +105,16 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
 
     // Create a list of tests
     let mut tests = Vec::<libtest_mimic::Trial>::new();
+    let file_registry = TestFileRegistry::new();
+    let failure_collector = TestFailureCollector::new();
     tests.extend(
-        integration_test::tests(util::BinPaths::from_env()?)
-            .into_iter()
-            .map(|trial| trial.run_blocking(rt_handle.clone())),
+        integration_test::tests(
+            util::BinPaths::from_env()?,
+            file_registry,
+            failure_collector,
+        )
+        .into_iter()
+        .map(|trial| trial.run_blocking(rt_handle.clone())),
     );
     // Optional filter for selected tests
     if let Some(selected) = &args.tests {

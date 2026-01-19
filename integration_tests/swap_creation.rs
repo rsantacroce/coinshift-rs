@@ -8,7 +8,7 @@ use bip300301_enforcer_integration_tests::{
         Mode, Network, PostSetup as EnforcerPostSetup, Sidechain as _,
         setup as setup_enforcer,
     },
-    util::{AbortOnDrop, AsyncTrial},
+    util::{AbortOnDrop, AsyncTrial, TestFailureCollector, TestFileRegistry},
 };
 use coinshift::types::{Address, ParentChainType, SwapId, SwapState};
 use coinshift_app_rpc_api::RpcClient as _;
@@ -233,11 +233,14 @@ async fn cleanup_swapper(
     enforcer_post_setup: EnforcerPostSetup,
 ) -> anyhow::Result<()> {
     drop(sidechain);
-    tracing::info!("Removing {}", enforcer_post_setup.out_dir.path().display());
+    tracing::info!(
+        "Removing {}",
+        enforcer_post_setup.directories.base_dir.path().display()
+    );
     drop(enforcer_post_setup.tasks);
     // Wait for tasks to die
     sleep(std::time::Duration::from_secs(1)).await;
-    enforcer_post_setup.out_dir.cleanup()?;
+    enforcer_post_setup.directories.base_dir.cleanup()?;
     Ok(())
 }
 
@@ -630,24 +633,39 @@ async fn swap_creation_open_fill(bin_paths: BinPaths) -> anyhow::Result<()> {
 
 pub fn swap_creation_fixed_trial(
     bin_paths: BinPaths,
+    file_registry: TestFileRegistry,
+    failure_collector: TestFailureCollector,
 ) -> AsyncTrial<BoxFuture<'static, anyhow::Result<()>>> {
     AsyncTrial::new(
         "swap_creation_fixed",
         swap_creation_fixed(bin_paths).boxed(),
+        file_registry,
+        failure_collector,
     )
 }
 
 pub fn swap_creation_open_trial(
     bin_paths: BinPaths,
+    file_registry: TestFileRegistry,
+    failure_collector: TestFailureCollector,
 ) -> AsyncTrial<BoxFuture<'static, anyhow::Result<()>>> {
-    AsyncTrial::new("swap_creation_open", swap_creation_open(bin_paths).boxed())
+    AsyncTrial::new(
+        "swap_creation_open",
+        swap_creation_open(bin_paths).boxed(),
+        file_registry,
+        failure_collector,
+    )
 }
 
 pub fn swap_creation_open_fill_trial(
     bin_paths: BinPaths,
+    file_registry: TestFileRegistry,
+    failure_collector: TestFailureCollector,
 ) -> AsyncTrial<BoxFuture<'static, anyhow::Result<()>>> {
     AsyncTrial::new(
         "swap_creation_open_fill",
         swap_creation_open_fill(bin_paths).boxed(),
+        file_registry,
+        failure_collector,
     )
 }

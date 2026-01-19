@@ -149,11 +149,12 @@ impl Sidechain for PostSetup {
         let reserved_ports = ReservedPorts::new()?;
         let coinshift_dir = if let Some(suffix) = init.data_dir_suffix {
             post_setup
-                .out_dir
+                .directories
+                .base_dir
                 .path()
                 .join(format!("coinshift-{suffix}"))
         } else {
-            post_setup.out_dir.path().join("coinshift")
+            post_setup.directories.base_dir.path().join("coinshift")
         };
         std::fs::create_dir(&coinshift_dir)
             .map_err(Self::SetupError::CreateCoinshiftDir)?;
