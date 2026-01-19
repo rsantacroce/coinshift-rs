@@ -135,7 +135,7 @@ impl PostSetup {
 
 impl Sidechain for PostSetup {
     const SIDECHAIN_NUMBER: SidechainNumber =
-        SidechainNumber(coinshift::types::THIS_SIDECHAIN as u8);
+        SidechainNumber(coinshift::types::THIS_SIDECHAIN);
 
     type Init = Init;
 

@@ -133,8 +133,8 @@ fn connect_withdrawal_bundle_submitted(
         // Calculate total value being withdrawn from spend_utxos
         let total_spent_value: bitcoin::Amount = bundle
             .spend_utxos()
-            .iter()
-            .map(|(_, output)| GetValue::get_value(&output.content))
+            .values()
+            .map(|output| GetValue::get_value(&output.content))
             .sum();
 
         let output_count = bundle.tx().output.len().saturating_sub(2);
@@ -541,8 +541,11 @@ fn connect_event(
 /// 2. For each swap, query swap.parent_chain (e.g., Signet) for transactions
 /// 3. Match transactions by: l1_recipient_address and l1_amount
 /// 4. Update swap state based on found transactions and confirmations
-/// Query L1 blockchain for matching transactions and update swap
-/// block_hash and block_height are the sidechain block where this validation occurs
+///
+/// Query L1 blockchain for matching transactions and update swap.
+///
+/// `block_hash` and `block_height` are the sidechain block where this
+/// validation occurs.
 fn query_and_update_swap(
     rpc_config: &RpcConfig,
     swap: &mut Swap,
@@ -686,19 +689,19 @@ fn process_coinshift_transactions(
         );
 
         // Check if swap has expired
-        if let Some(expires_at) = swap.expires_at_height {
-            if block_height >= expires_at {
-                tracing::info!(
-                    swap_id = %swap.id,
-                    block_height = %block_height,
-                    expires_at = %expires_at,
-                    "Swap expired, marking as cancelled"
-                );
-                swap.state = SwapState::Cancelled;
-                state.save_swap(rwtxn, &swap)?;
-                expired_swaps_count += 1;
-                continue;
-            }
+        if let Some(expires_at) = swap.expires_at_height
+            && block_height >= expires_at
+        {
+            tracing::info!(
+                swap_id = %swap.id,
+                block_height = %block_height,
+                expires_at = %expires_at,
+                "Swap expired, marking as cancelled"
+            );
+            swap.state = SwapState::Cancelled;
+            state.save_swap(rwtxn, &swap)?;
+            expired_swaps_count += 1;
+            continue;
         }
 
         // For L2 → L1 swaps, we need to check if the L1 transaction exists
@@ -736,36 +739,34 @@ fn process_coinshift_transactions(
         let parent_chain_clone = swap.parent_chain;
         if let (Some(l1_recipient), Some(l1_amount)) =
             (l1_recipient_clone.as_deref(), l1_amount_clone)
+            && let Some(get_rpc_config) = rpc_config_getter
+            && let Some(rpc_config) = get_rpc_config(parent_chain_clone)
         {
-            if let Some(get_rpc_config) = rpc_config_getter {
-                if let Some(rpc_config) = get_rpc_config(parent_chain_clone) {
-                    match query_and_update_swap(
-                        &rpc_config,
-                        &mut swap,
-                        l1_recipient,
-                        l1_amount,
-                        block_hash,
-                        block_height,
-                    ) {
-                        Ok(updated) => {
-                            if updated {
-                                tracing::info!(
-                                    swap_id = %swap.id,
-                                    l1_txid = ?swap.l1_txid,
-                                    state = ?swap.state,
-                                    "Updated swap with L1 transaction"
-                                );
-                                state.save_swap(rwtxn, &swap)?;
-                            }
-                        }
-                        Err(e) => {
-                            tracing::debug!(
-                                swap_id = %swap.id,
-                                error = %e,
-                                "Failed to query L1 blockchain for swap (this is normal if RPC is not configured)"
-                            );
-                        }
+            match query_and_update_swap(
+                &rpc_config,
+                &mut swap,
+                l1_recipient,
+                l1_amount,
+                block_hash,
+                block_height,
+            ) {
+                Ok(updated) => {
+                    if updated {
+                        tracing::info!(
+                            swap_id = %swap.id,
+                            l1_txid = ?swap.l1_txid,
+                            state = ?swap.state,
+                            "Updated swap with L1 transaction"
+                        );
+                        state.save_swap(rwtxn, &swap)?;
                     }
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        swap_id = %swap.id,
+                        error = %e,
+                        "Failed to query L1 blockchain for swap (this is normal if RPC is not configured)"
+                    );
                 }
             }
         }

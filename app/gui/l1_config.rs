@@ -1,27 +1,20 @@
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
+
 use coinshift::types::ParentChainType;
 use eframe::egui::{self, Button, Color32, ComboBox, RichText, TextEdit};
 use poll_promise::Promise;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 struct RpcConfig {
     url: String,
     user: String,
     password: String,
-}
-
-impl Default for RpcConfig {
-    fn default() -> Self {
-        Self {
-            url: String::new(),
-            user: String::new(),
-            password: String::new(),
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -72,20 +65,18 @@ impl L1Config {
 
     fn load(&mut self, _ctx: &egui::Context) {
         let config_path = Self::config_file_path();
-        if let Ok(file_content) = std::fs::read_to_string(&config_path) {
-            if let Ok(stored_configs) = serde_json::from_str::<
+        if let Ok(file_content) = std::fs::read_to_string(&config_path)
+            && let Ok(stored_configs) = serde_json::from_str::<
                 HashMap<ParentChainType, RpcConfig>,
             >(&file_content)
+        {
+            self.configs = stored_configs;
+            // Load the currently selected parent chain's config
+            if let Some(config) = self.configs.get(&self.selected_parent_chain)
             {
-                self.configs = stored_configs;
-                // Load the currently selected parent chain's config
-                if let Some(config) =
-                    self.configs.get(&self.selected_parent_chain)
-                {
-                    self.rpc_url = config.url.clone();
-                    self.rpc_user = config.user.clone();
-                    self.rpc_password = config.password.clone();
-                }
+                self.rpc_url = config.url.clone();
+                self.rpc_user = config.user.clone();
+                self.rpc_password = config.password.clone();
             }
         }
     }
@@ -128,24 +119,6 @@ impl L1Config {
         // Reset connection status when switching chains
         *self.connection_status.lock().unwrap() = ConnectionStatus::Unknown;
         self.status_promise = None;
-    }
-
-    pub fn get_rpc_url(&self, parent_chain: ParentChainType) -> Option<String> {
-        self.configs.get(&parent_chain).map(|c| c.url.clone())
-    }
-
-    pub fn get_rpc_user(
-        &self,
-        parent_chain: ParentChainType,
-    ) -> Option<String> {
-        self.configs.get(&parent_chain).map(|c| c.user.clone())
-    }
-
-    pub fn get_rpc_password(
-        &self,
-        parent_chain: ParentChainType,
-    ) -> Option<String> {
-        self.configs.get(&parent_chain).map(|c| c.password.clone())
     }
 
     fn check_connection(&mut self, url: &str, user: &str, password: &str) {
@@ -213,24 +186,24 @@ impl L1Config {
     }
 
     fn update_status(&mut self) {
-        if let Some(promise) = &self.status_promise {
-            if let Some(result) = promise.ready() {
-                match result {
-                    Ok(block_height) => {
-                        *self.connection_status.lock().unwrap() =
-                            ConnectionStatus::Connected {
-                                block_height: *block_height,
-                            };
-                    }
-                    Err(err) => {
-                        *self.connection_status.lock().unwrap() =
-                            ConnectionStatus::Disconnected {
-                                error: format!("{err:#}"),
-                            };
-                    }
+        if let Some(promise) = &self.status_promise
+            && let Some(result) = promise.ready()
+        {
+            match result {
+                Ok(block_height) => {
+                    *self.connection_status.lock().unwrap() =
+                        ConnectionStatus::Connected {
+                            block_height: *block_height,
+                        };
                 }
-                self.status_promise = None;
+                Err(err) => {
+                    *self.connection_status.lock().unwrap() =
+                        ConnectionStatus::Disconnected {
+                            error: format!("{err:#}"),
+                        };
+                }
             }
+            self.status_promise = None;
         }
     }
 
@@ -359,19 +332,18 @@ impl L1Config {
             ConnectionStatus::Unknown => {
                 if let Some(saved_config) =
                     self.configs.get(&self.selected_parent_chain)
+                    && !saved_config.url.is_empty()
                 {
-                    if !saved_config.url.is_empty() {
-                        let url = saved_config.url.clone();
-                        let user = saved_config.user.clone();
-                        let password = saved_config.password.clone();
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("●").color(Color32::GRAY));
-                            ui.label("Status: Unknown");
-                            if ui.button("Check Connection").clicked() {
-                                self.check_connection(&url, &user, &password);
-                            }
-                        });
-                    }
+                    let url = saved_config.url.clone();
+                    let user = saved_config.user.clone();
+                    let password = saved_config.password.clone();
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("●").color(Color32::GRAY));
+                        ui.label("Status: Unknown");
+                        if ui.button("Check Connection").clicked() {
+                            self.check_connection(&url, &user, &password);
+                        }
+                    });
                 }
             }
             ConnectionStatus::Checking => {
@@ -395,14 +367,13 @@ impl L1Config {
                 });
                 if let Some(saved_config) =
                     self.configs.get(&self.selected_parent_chain)
+                    && !saved_config.url.is_empty()
                 {
-                    if !saved_config.url.is_empty() {
-                        let url = saved_config.url.clone();
-                        let user = saved_config.user.clone();
-                        let password = saved_config.password.clone();
-                        if ui.button("Refresh").clicked() {
-                            self.check_connection(&url, &user, &password);
-                        }
+                    let url = saved_config.url.clone();
+                    let user = saved_config.user.clone();
+                    let password = saved_config.password.clone();
+                    if ui.button("Refresh").clicked() {
+                        self.check_connection(&url, &user, &password);
                     }
                 }
             }
@@ -419,14 +390,13 @@ impl L1Config {
                 ui.label(RichText::new(error_msg).small().color(Color32::RED));
                 if let Some(saved_config) =
                     self.configs.get(&self.selected_parent_chain)
+                    && !saved_config.url.is_empty()
                 {
-                    if !saved_config.url.is_empty() {
-                        let url = saved_config.url.clone();
-                        let user = saved_config.user.clone();
-                        let password = saved_config.password.clone();
-                        if ui.button("Retry").clicked() {
-                            self.check_connection(&url, &user, &password);
-                        }
+                    let url = saved_config.url.clone();
+                    let user = saved_config.user.clone();
+                    let password = saved_config.password.clone();
+                    if ui.button("Retry").clicked() {
+                        self.check_connection(&url, &user, &password);
                     }
                 }
             }

@@ -91,17 +91,15 @@ impl CreateSwap {
                 ui.text_edit_singleline(
                     self.l2_recipient.get_or_insert_with(String::new),
                 );
-                if ui.button("Use My Address").clicked() {
-                    if let Some(app) = app {
-                        match app.wallet.get_new_address() {
-                            Ok(addr) => {
-                                self.l2_recipient = Some(addr.to_string());
-                            }
-                            Err(err) => {
-                                tracing::error!(
-                                    "Failed to get address: {err:#}"
-                                );
-                            }
+                if ui.button("Use My Address").clicked()
+                    && let Some(app) = app
+                {
+                    match app.wallet.get_new_address() {
+                        Ok(addr) => {
+                            self.l2_recipient = Some(addr.to_string());
+                        }
+                        Err(err) => {
+                            tracing::error!("Failed to get address: {err:#}");
                         }
                     }
                 }
@@ -161,11 +159,10 @@ impl CreateSwap {
         };
 
         let is_valid = app.is_some()
-            && !self.l1_recipient_address.is_empty()
-            && l1_amount.is_ok()
+            && (l2_recipient.is_some() || self.is_open_swap)
             && l2_amount.is_ok()
-            && (!self.is_open_swap && l2_recipient.is_some()
-                || self.is_open_swap);
+            && l1_amount.is_ok()
+            && !self.l1_recipient_address.is_empty();
 
         if ui
             .add_enabled(is_valid, Button::new("Create Swap"))

@@ -331,19 +331,17 @@ impl App {
                 .join("coinshift")
                 .join("l1_rpc_configs.json");
 
-            if let Ok(file_content) = std::fs::read_to_string(&config_path) {
-                if let Ok(configs) = serde_json::from_str::<
+            if let Ok(file_content) = std::fs::read_to_string(&config_path)
+                && let Ok(configs) = serde_json::from_str::<
                     HashMap<ParentChainType, LocalRpcConfig>,
                 >(&file_content)
-                {
-                    if let Some(local_config) = configs.get(&parent_chain) {
-                        return Some(RpcConfig {
-                            url: local_config.url.clone(),
-                            user: local_config.user.clone(),
-                            password: local_config.password.clone(),
-                        });
-                    }
-                }
+                && let Some(local_config) = configs.get(&parent_chain)
+            {
+                return Some(RpcConfig {
+                    url: local_config.url.clone(),
+                    user: local_config.user.clone(),
+                    password: local_config.password.clone(),
+                });
             }
             None
         }

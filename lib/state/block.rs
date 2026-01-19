@@ -309,9 +309,9 @@ pub fn connect_prevalidated(
 
                 // Verify swap ID matches
                 if swap.id.0 != swap_id.0 {
-                    return Err(Error::InvalidTransaction(format!(
-                        "Swap ID mismatch in SwapCreate"
-                    )));
+                    return Err(Error::InvalidTransaction(
+                        "Swap ID mismatch in SwapCreate".to_owned(),
+                    ));
                 }
 
                 tracing::debug!(
@@ -338,9 +338,9 @@ pub fn connect_prevalidated(
                                 txid,
                                 vout: vout as u32,
                             };
-                            state
-                                .lock_output_to_swap(rwtxn, &outpoint, &swap_id)
-                                .map_err(Error::from)?;
+                            state.lock_output_to_swap(
+                                rwtxn, &outpoint, &swap_id,
+                            )?;
                         }
                     }
                 }

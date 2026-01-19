@@ -358,6 +358,7 @@ impl BorshDeserialize for Swap {
 }
 
 impl Swap {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: SwapId,
         direction: SwapDirection,

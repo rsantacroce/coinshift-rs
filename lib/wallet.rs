@@ -288,6 +288,7 @@ impl Wallet {
     /// Create a SwapCreate transaction for L2 → L1 swaps
     /// If l2_recipient is None, creates an open swap (anyone can fill it)
     /// `is_locked` is an optional function that returns true if an outpoint is locked to a swap
+    #[allow(clippy::too_many_arguments)]
     pub fn create_swap_create_tx<F>(
         &self,
         accumulator: &Accumulator,
@@ -454,7 +455,7 @@ impl Wallet {
             outputs,
             data: TxData::SwapClaim {
                 swap_id: swap_id.0,
-                l2_claimer_address: l2_claimer_address, // For open swaps
+                l2_claimer_address, // For open swaps
                 proof_data: None,
             },
         };

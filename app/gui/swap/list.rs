@@ -1,11 +1,13 @@
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
+
 use coinshift::bitcoin_rpc::{BitcoinRpcClient, RpcConfig};
 use coinshift::types::{
     Address, ParentChainType, Swap, SwapId, SwapState, SwapTxId,
 };
 use eframe::egui::{self, Button, ScrollArea};
-use hex;
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
 
 use crate::app::App;
 use crate::gui::util::show_btc_amount;
@@ -104,10 +106,7 @@ impl SwapList {
                         // Create a pending swap entry
                         let txid = tx.transaction.txid();
                         let l1_txid =
-                            coinshift::types::SwapTxId::from_bytes(&vec![
-                                0u8;
-                                32
-                            ]);
+                            coinshift::types::SwapTxId::from_bytes(&[0u8; 32]);
                         let swap = coinshift::types::Swap::new(
                             swap_id_obj,
                             coinshift::types::SwapDirection::L2ToL1,
@@ -143,18 +142,19 @@ impl SwapList {
             .map(|last| last.elapsed() >= Duration::from_secs(10))
             .unwrap_or(true);
 
-        if should_check && !self.checking_confirmations {
-            if let Some(app) = app {
-                self.check_confirmations_dynamically(app);
-            }
+        if should_check
+            && !self.checking_confirmations
+            && let Some(app) = app
+        {
+            self.check_confirmations_dynamically(app);
         }
 
         ui.horizontal(|ui| {
             ui.heading("My Swaps");
-            if ui.button("Refresh").clicked() {
-                if let Some(app) = app {
-                    self.refresh_swaps(app);
-                }
+            if ui.button("Refresh").clicked()
+                && let Some(app) = app
+            {
+                self.refresh_swaps(app);
             }
             if self.checking_confirmations {
                 ui.label(
@@ -185,10 +185,10 @@ impl SwapList {
         ui.horizontal(|ui| {
             ui.label("Search Swap by ID:");
             ui.text_edit_singleline(&mut self.swap_id_search);
-            if ui.button("Search").clicked() {
-                if let Some(app) = app {
-                    self.search_swap_by_id(app);
-                }
+            if ui.button("Search").clicked()
+                && let Some(app) = app
+            {
+                self.search_swap_by_id(app);
             }
             if !self.swap_id_search.is_empty() && ui.button("Clear").clicked() {
                 self.swap_id_search.clear();
@@ -411,10 +411,8 @@ impl SwapList {
                             Button::new(egui::RichText::new("❌ Cancel Swap").color(egui::Color32::ORANGE)),
                         )
                         .clicked()
-                    {
-                        if let Some(app) = app {
-                            self.cancel_swap(app, &swap.id);
-                        }
+                    && let Some(app) = app {
+                        self.cancel_swap(app, &swap.id);
                     }
                     ui.label("(Unlocks outputs and marks as cancelled)");
                 }
@@ -427,10 +425,8 @@ impl SwapList {
                             Button::new(egui::RichText::new("🗑️ Delete Swap").color(egui::Color32::RED)),
                         )
                         .clicked()
-                    {
-                        if let Some(app) = app {
-                            self.delete_swap(app, &swap.id);
-                        }
+                    && let Some(app) = app {
+                        self.delete_swap(app, &swap.id);
                     }
                     ui.label("(Permanently removes from database)");
                 }
@@ -473,10 +469,8 @@ impl SwapList {
                                     Button::new("Update Swap (Auto-fetch confirmations from RPC)"),
                                 )
                                 .clicked()
-                            {
-                                if let Some(app) = app {
-                                    self.update_swap_with_auto_confirmations(app, &swap);
-                                }
+                            && let Some(app) = app {
+                                self.update_swap_with_auto_confirmations(app, swap);
                             }
 
                             if ui
@@ -485,10 +479,8 @@ impl SwapList {
                                     Button::new("Fetch Confirmations Only"),
                                 )
                                 .clicked()
-                            {
-                                if let Some(app) = app {
-                                    self.fetch_confirmations_from_rpc(app, &swap);
-                                }
+                            && let Some(app) = app {
+                                self.fetch_confirmations_from_rpc(app, swap);
                             }
                         });
 
@@ -512,17 +504,15 @@ impl SwapList {
                                     Button::new("Claim"),
                                 )
                                 .clicked()
-                            {
-                                if let Some(app) = app {
-                                    let claimer_addr: Address = match self.claimer_address_input.parse() {
-                                        Ok(addr) => addr,
-                                        Err(err) => {
-                                            tracing::error!("Invalid address: {err}");
-                                            return;
-                                        }
-                                    };
-                                    self.claim_swap(app, &swap.id, Some(claimer_addr));
-                                }
+                            && let Some(app) = app {
+                                let claimer_addr: Address = match self.claimer_address_input.parse() {
+                                    Ok(addr) => addr,
+                                    Err(err) => {
+                                        tracing::error!("Invalid address: {err}");
+                                        return;
+                                    }
+                                };
+                                self.claim_swap(app, &swap.id, Some(claimer_addr));
                             }
                         });
                     } else {
@@ -530,10 +520,8 @@ impl SwapList {
                         if ui
                             .add_enabled(app.is_some(), Button::new("Claim Swap"))
                             .clicked()
-                        {
-                            if let Some(app) = app {
-                                self.claim_swap(app, &swap.id, None);
-                            }
+                        && let Some(app) = app {
+                            self.claim_swap(app, &swap.id, None);
                         }
                     }
                 }
@@ -747,7 +735,6 @@ impl SwapList {
                 Ok(Some(swap)) => {
                     tracing::info!("Found swap by ID: {}", swap_id);
                     self.searched_swap = Some(swap);
-                    return;
                 }
                 Ok(None) => {
                     // Also check mempool
@@ -763,46 +750,41 @@ impl SwapList {
                                 l1_recipient_address,
                                 l1_amount,
                             } = &tx.transaction.data
-                            {
-                                if coinshift::types::SwapId(*tx_swap_id)
+                                && coinshift::types::SwapId(*tx_swap_id)
                                     == swap_id
-                                {
-                                    let l1_txid =
-                                        coinshift::types::SwapTxId::from_bytes(
-                                            &vec![0u8; 32],
-                                        );
-                                    let swap = coinshift::types::Swap::new(
-                                        swap_id,
-                                        coinshift::types::SwapDirection::L2ToL1,
-                                        *parent_chain,
-                                        l1_txid,
-                                        Some(*required_confirmations),
-                                        *l2_recipient,
-                                        bitcoin::Amount::from_sat(*l2_amount),
-                                        l1_recipient_address.clone(),
-                                        l1_amount
-                                            .map(bitcoin::Amount::from_sat),
-                                        0, // Height 0 for pending
-                                        None,
+                            {
+                                let l1_txid =
+                                    coinshift::types::SwapTxId::from_bytes(
+                                        &[0u8; 32],
                                     );
-                                    self.searched_swap = Some(swap);
-                                    tracing::info!(
-                                        "Found swap in mempool: {}",
-                                        swap_id
-                                    );
-                                    return;
-                                }
+                                let swap = coinshift::types::Swap::new(
+                                    swap_id,
+                                    coinshift::types::SwapDirection::L2ToL1,
+                                    *parent_chain,
+                                    l1_txid,
+                                    Some(*required_confirmations),
+                                    *l2_recipient,
+                                    bitcoin::Amount::from_sat(*l2_amount),
+                                    l1_recipient_address.clone(),
+                                    l1_amount.map(bitcoin::Amount::from_sat),
+                                    0, // Height 0 for pending
+                                    None,
+                                );
+                                self.searched_swap = Some(swap);
+                                tracing::info!(
+                                    "Found swap in mempool: {}",
+                                    swap_id
+                                );
+                                return;
                             }
                         }
                     }
                     self.search_error =
                         Some(format!("Swap not found: {}", swap_id));
-                    return;
                 }
                 Err(err) => {
                     self.search_error =
                         Some(format!("Failed to get swap: {}", err));
-                    return;
                 }
             }
         } else if search_input.len() < 64 {
@@ -861,24 +843,20 @@ impl SwapList {
                     "No swap found starting with '{}'. Please enter full 64-character swap ID.",
                     search_input
                 ));
-                return;
             } else if matching_swaps.len() > 1 {
                 self.search_error = Some(format!(
                     "Multiple swaps found starting with '{}'. Please enter more characters to narrow down.",
                     search_input
                 ));
-                return;
             } else {
                 // Found exactly one match
                 self.searched_swap = Some(matching_swaps[0].clone());
-                return;
             }
         } else {
             self.search_error = Some(format!(
                 "Swap ID too long: expected 64 hex characters, got {}",
                 search_input.len()
             ));
-            return;
         }
     }
 
@@ -902,19 +880,17 @@ impl SwapList {
             .join("coinshift")
             .join("l1_rpc_configs.json");
 
-        if let Ok(file_content) = std::fs::read_to_string(&config_path) {
-            if let Ok(configs) = serde_json::from_str::<
+        if let Ok(file_content) = std::fs::read_to_string(&config_path)
+            && let Ok(configs) = serde_json::from_str::<
                 HashMap<ParentChainType, LocalRpcConfig>,
             >(&file_content)
-            {
-                if let Some(local_config) = configs.get(&parent_chain) {
-                    return Some(RpcConfig {
-                        url: local_config.url.clone(),
-                        user: local_config.user.clone(),
-                        password: local_config.password.clone(),
-                    });
-                }
-            }
+            && let Some(local_config) = configs.get(&parent_chain)
+        {
+            return Some(RpcConfig {
+                url: local_config.url.clone(),
+                user: local_config.user.clone(),
+                password: local_config.password.clone(),
+            });
         }
         None
     }
@@ -1317,27 +1293,25 @@ impl SwapList {
                         swap_id: tx_swap_id,
                         ..
                     } = &tx.transaction.data
+                        && coinshift::types::SwapId(*tx_swap_id) == *swap_id
                     {
-                        if coinshift::types::SwapId(*tx_swap_id) == *swap_id {
-                            let txid = tx.transaction.txid();
-                            if let Err(err) = app.node.remove_from_mempool(txid)
-                            {
-                                tracing::error!(
-                                    swap_id = %swap_id,
-                                    txid = %txid,
-                                    error = %err,
-                                    "Failed to remove pending swap from mempool"
-                                );
-                                return;
-                            }
-                            tracing::info!(
+                        let txid = tx.transaction.txid();
+                        if let Err(err) = app.node.remove_from_mempool(txid) {
+                            tracing::error!(
                                 swap_id = %swap_id,
                                 txid = %txid,
-                                "Removed pending swap from mempool"
+                                error = %err,
+                                "Failed to remove pending swap from mempool"
                             );
-                            self.refresh_swaps(app);
                             return;
                         }
+                        tracing::info!(
+                            swap_id = %swap_id,
+                            txid = %txid,
+                            "Removed pending swap from mempool"
+                        );
+                        self.refresh_swaps(app);
+                        return;
                     }
                 }
             }
@@ -1392,27 +1366,25 @@ impl SwapList {
                         swap_id: tx_swap_id,
                         ..
                     } = &tx.transaction.data
+                        && coinshift::types::SwapId(*tx_swap_id) == *swap_id
                     {
-                        if coinshift::types::SwapId(*tx_swap_id) == *swap_id {
-                            let txid = tx.transaction.txid();
-                            if let Err(err) = app.node.remove_from_mempool(txid)
-                            {
-                                tracing::error!(
-                                    swap_id = %swap_id,
-                                    txid = %txid,
-                                    error = %err,
-                                    "Failed to remove pending swap from mempool"
-                                );
-                                return;
-                            }
-                            tracing::info!(
+                        let txid = tx.transaction.txid();
+                        if let Err(err) = app.node.remove_from_mempool(txid) {
+                            tracing::error!(
                                 swap_id = %swap_id,
                                 txid = %txid,
-                                "Removed pending swap from mempool"
+                                error = %err,
+                                "Failed to remove pending swap from mempool"
                             );
-                            self.refresh_swaps(app);
                             return;
                         }
+                        tracing::info!(
+                            swap_id = %swap_id,
+                            txid = %txid,
+                            "Removed pending swap from mempool"
+                        );
+                        self.refresh_swaps(app);
+                        return;
                     }
                 }
             }

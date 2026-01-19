@@ -859,22 +859,21 @@ impl State {
                 .map_err(DbError::from)?;
 
             // Update swaps_by_recipient index (only for pre-specified swaps)
-            if let Some(recipient) = swap.l2_recipient {
-                if let Some(mut recipient_swaps) = self
+            if let Some(recipient) = swap.l2_recipient
+                && let Some(mut recipient_swaps) = self
                     .swaps_by_recipient
                     .try_get(rwtxn, &recipient)
                     .map_err(DbError::from)?
-                {
-                    recipient_swaps.retain(|id| *id != swap.id);
-                    if recipient_swaps.is_empty() {
-                        self.swaps_by_recipient
-                            .delete(rwtxn, &recipient)
-                            .map_err(DbError::from)?;
-                    } else {
-                        self.swaps_by_recipient
-                            .put(rwtxn, &recipient, &recipient_swaps)
-                            .map_err(DbError::from)?;
-                    }
+            {
+                recipient_swaps.retain(|id| *id != swap.id);
+                if recipient_swaps.is_empty() {
+                    self.swaps_by_recipient
+                        .delete(rwtxn, &recipient)
+                        .map_err(DbError::from)?;
+                } else {
+                    self.swaps_by_recipient
+                        .put(rwtxn, &recipient, &recipient_swaps)
+                        .map_err(DbError::from)?;
                 }
             }
         } else {
@@ -1490,6 +1489,7 @@ impl State {
     /// Called when a coinshift transaction is detected on L1
     /// For open swaps, l1_claimer_address should be the address of the person who sent the L1 transaction
     /// block_hash and block_height are the sidechain block where this update occurs
+    #[allow(clippy::too_many_arguments)]
     pub fn update_swap_l1_txid(
         &self,
         rwtxn: &mut RwTxn,
@@ -1758,7 +1758,7 @@ impl State {
                 }
             }
 
-            if height % 1000 == 0 && height > 0 {
+            if height.is_multiple_of(1000) && height > 0 {
                 tracing::info!(
                     processed_blocks = height,
                     total_blocks = block_hashes.len(),

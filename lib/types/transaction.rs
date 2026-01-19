@@ -508,6 +508,7 @@ pub use content::Content;
     BorshDeserialize,
     Clone,
     Debug,
+    Default,
     Deserialize,
     Eq,
     PartialEq,
@@ -515,6 +516,7 @@ pub use content::Content;
 )]
 pub enum TxData {
     /// Regular transaction (no special data)
+    #[default]
     Regular,
     /// Swap creation transaction
     SwapCreate {
@@ -549,12 +551,6 @@ impl utoipa::PartialSchema for TxData {
         utoipa::openapi::RefOr::T(utoipa::openapi::Schema::Object(
             utoipa::openapi::Object::with_type(utoipa::openapi::Type::String),
         ))
-    }
-}
-
-impl Default for TxData {
-    fn default() -> Self {
-        Self::Regular
     }
 }
 

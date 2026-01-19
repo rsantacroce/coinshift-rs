@@ -83,6 +83,7 @@ impl From<net::Error> for Error {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn connect_tip_(
     rwtxn: &mut RwTxn<'_>,
     archive: &Archive,
@@ -1065,10 +1066,10 @@ impl NetTask {
                     impl Drop for OneshotGuard {
                         fn drop(&mut self) {
                             // If we haven't sent a response yet, send false to indicate failure
-                            if !self.sent {
-                                if let Some(resp_tx) = self.resp_tx.take() {
-                                    let _ = resp_tx.send(false);
-                                }
+                            if !self.sent
+                                && let Some(resp_tx) = self.resp_tx.take()
+                            {
+                                let _ = resp_tx.send(false);
                             }
                         }
                     }

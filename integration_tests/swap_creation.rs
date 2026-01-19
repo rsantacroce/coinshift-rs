@@ -145,11 +145,10 @@ async fn verify_swap_locks_utxos(
             value,
             swap_id: locked_swap_id,
         } = &utxo.output.content
+            && *locked_swap_id == swap_id.0
         {
-            if *locked_swap_id == swap_id.0 {
-                has_locked_outputs = true;
-                total_locked += value.to_sat();
-            }
+            has_locked_outputs = true;
+            total_locked += value.to_sat();
         }
     }
 
@@ -534,11 +533,11 @@ async fn swap_creation_open_fill_task(
     let mut completed = None;
     for _ in 0..MAX_STATUS_RETRIES {
         let status = sidechain.rpc_client.get_swap_status(swap_id).await?;
-        if let Some(s) = status {
-            if matches!(s.state, SwapState::Completed) {
-                completed = Some(s);
-                break;
-            }
+        if let Some(s) = status
+            && matches!(s.state, SwapState::Completed)
+        {
+            completed = Some(s);
+            break;
         }
         sleep(std::time::Duration::from_millis(STATUS_DELAY_MS)).await;
     }
