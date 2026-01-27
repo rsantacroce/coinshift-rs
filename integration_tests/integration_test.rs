@@ -5,6 +5,7 @@ use bip300301_enforcer_integration_tests::{
 use futures::{FutureExt, future::BoxFuture};
 
 use crate::{
+    multi_node_verification::multi_node_verification_trial,
     setup::{Init, PostSetup},
     swap_creation::{
         swap_creation_duplicate_trial, swap_creation_fixed_trial,
@@ -40,6 +41,7 @@ pub fn tests(
         swap_creation_open_fill_trial(bin_paths.clone()),
         swap_creation_duplicate_trial(bin_paths.clone()),
         swap_creation_insufficient_funds_trial(bin_paths.clone()),
+        multi_node_verification_trial(bin_paths.clone()),
         // unknown_withdrawal_trial(bin_paths),
     ]
 }
