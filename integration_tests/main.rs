@@ -95,13 +95,15 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     let args = Cli::parse();
     let () = set_tracing_subscriber(tracing::Level::DEBUG)?;
     let rt_handle = tokio::runtime::Handle::current();
-    // Read env vars
-    if let Some(env_filepath) =
-        std::env::var_os("COINSHIFT_INTEGRATION_TEST_ENV")
-    {
-        let env_filepath: &std::path::Path = env_filepath.as_ref();
+    // Read env vars (default to example.env so tests don't pick up repo .env)
+    let env_filepath = std::env::var_os("COINSHIFT_INTEGRATION_TEST_ENV")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from("integration_tests/example.env")
+        });
+    if env_filepath.exists() {
         tracing::info!("Adding env vars from `{}`", env_filepath.display());
-        dotenvy::from_filename_override(env_filepath)?;
+        dotenvy::from_filename_override(&env_filepath)?;
     }
 
     // Create a list of tests
