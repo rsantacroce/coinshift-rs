@@ -3,14 +3,14 @@ name: Build and push Docker image
 on:
   push:
     branches:
-      - master
+      - main
   workflow_dispatch:
   pull_request:
 
 jobs:
   # Build and push ALL events. We'll make sure to give the images
   # sensible tags, so there's no confusion around what's 'dev' builds
-  # through PRs, and what's proper 'master' builds.
+  # through PRs, and what's proper 'main' builds.
   #
   # Official GitHub docs on this: https://docs.github.com/en/actions/use-cases-and-examples/publishing-packages/publishing-docker-images
   build-push-docker:
