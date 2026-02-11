@@ -4,7 +4,7 @@
 //! is used before accepting an L1 tx (in query_and_update_swap and update_swap_l1_txid).
 
 use bip300301_enforcer_integration_tests::{
-    integration_test::{deposit, fund_enforcer},
+    integration_test::deposit,
     setup::{PostSetup as EnforcerPostSetup, Sidechain as _},
     util::{AbortOnDrop, AsyncTrial, TestFailureCollector, TestFileRegistry},
 };
@@ -15,7 +15,7 @@ use tokio::time::sleep;
 use tracing::Instrument as _;
 
 use crate::{
-    setup::{Init, PostSetup},
+    setup::PostSetup,
     util::BinPaths,
 };
 
@@ -28,7 +28,7 @@ const SWAP_FEE: u64 = 1_000;
 async fn wait_for_swap_in_block(
     sidechain: &mut PostSetup,
     enforcer: &mut EnforcerPostSetup,
-    swap_txid: coinshift::types::Txid,
+    _swap_txid: coinshift::types::Txid,
     swap_id: coinshift::types::SwapId,
 ) -> anyhow::Result<()> {
     sidechain.bmm_single(enforcer).await?;
@@ -155,7 +155,7 @@ pub fn l1_txid_uniqueness_trial(
                 let res_tx = res_tx.clone();
                 async move {
                     let res = l1_txid_uniqueness_task(bin_paths, res_tx.clone()).await;
-                    let _ = res_tx.unbounded_send(res);
+                    drop(res_tx.unbounded_send(res));
                 }
                 .in_current_span()
             })

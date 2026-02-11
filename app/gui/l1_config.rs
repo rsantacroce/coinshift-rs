@@ -208,12 +208,16 @@ impl L1Config {
     }
 
     pub fn show(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        ui.heading("L1 Node RPC Configuration");
+        ui.heading(format!(
+            "{} Node RPC Configuration",
+            self.selected_parent_chain.coin_name()
+        ));
         ui.separator();
 
-        ui.label(
-            "Configure the RPC URL for the L1 node (e.g., Bitcoin Core RPC)",
-        );
+        ui.label(format!(
+            "Configure the RPC URL for the {} node.",
+            self.selected_parent_chain.coin_name()
+        ));
         ui.label("This is used for monitoring L1 transactions for swaps.");
         ui.label("Each parent chain can have its own RPC configuration.");
         ui.add_space(10.0);
@@ -223,33 +227,19 @@ impl L1Config {
             ui.label("Parent Chain:");
             let previous_chain = self.selected_parent_chain;
             ComboBox::from_id_salt("l1_config_parent_chain")
-                .selected_text(format!("{:?}", self.selected_parent_chain))
+                .selected_text(format!(
+                    "{} ({})",
+                    self.selected_parent_chain.coin_name(),
+                    self.selected_parent_chain.ticker()
+                ))
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut self.selected_parent_chain,
-                        ParentChainType::BTC,
-                        "BTC",
-                    );
-                    ui.selectable_value(
-                        &mut self.selected_parent_chain,
-                        ParentChainType::Signet,
-                        "Signet",
-                    );
-                    ui.selectable_value(
-                        &mut self.selected_parent_chain,
-                        ParentChainType::Regtest,
-                        "Regtest",
-                    );
-                    ui.selectable_value(
-                        &mut self.selected_parent_chain,
-                        ParentChainType::BCH,
-                        "BCH",
-                    );
-                    ui.selectable_value(
-                        &mut self.selected_parent_chain,
-                        ParentChainType::LTC,
-                        "LTC",
-                    );
+                    for chain in ParentChainType::all() {
+                        ui.selectable_value(
+                            &mut self.selected_parent_chain,
+                            *chain,
+                            format!("{} ({})", chain.coin_name(), chain.ticker()),
+                        );
+                    }
                 });
 
             // Load config when parent chain changes
@@ -260,11 +250,22 @@ impl L1Config {
 
         ui.add_space(10.0);
 
+        // Show chain-specific info
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Default RPC Port:").weak());
+            ui.label(format!("{}", self.selected_parent_chain.default_rpc_port()));
+            ui.label(RichText::new("|").weak());
+            ui.label(RichText::new("Required Confirmations:").weak());
+            ui.label(format!("{}", self.selected_parent_chain.default_confirmations()));
+        });
+
+        ui.add_space(10.0);
+
         ui.horizontal(|ui| {
             ui.label("RPC URL:");
             ui.add(
                 TextEdit::singleline(&mut self.rpc_url)
-                    .hint_text("http://localhost:8332")
+                    .hint_text(self.selected_parent_chain.default_rpc_url_hint())
                     .desired_width(300.0),
             );
         });
@@ -448,10 +449,35 @@ impl L1Config {
         ui.add_space(20.0);
         ui.separator();
         ui.label(egui::RichText::new("Note:").strong());
-        ui.label("This RPC URL is used to monitor L1 transactions for swaps.");
-        ui.label(
-            "Make sure the L1 node is running and accessible at this URL.",
-        );
+        ui.label(format!(
+            "This RPC URL is used to monitor {} transactions for swaps.",
+            self.selected_parent_chain.coin_name()
+        ));
+        ui.label(format!(
+            "Make sure the {} node is running and accessible at this URL.",
+            self.selected_parent_chain.coin_name()
+        ));
         ui.label("Configuration is saved per parent chain and persists across sessions.");
+
+        // Chain-specific setup hints
+        ui.add_space(10.0);
+        ui.label(egui::RichText::new("Setup Hints:").strong());
+        match self.selected_parent_chain {
+            ParentChainType::BTC => {
+                ui.label("Use Bitcoin Core with -txindex=1 for full transaction lookup.");
+            }
+            ParentChainType::BCH => {
+                ui.label("Use Bitcoin Cash Node (BCHN) or Bitcoin ABC with -txindex=1.");
+            }
+            ParentChainType::LTC => {
+                ui.label("Use Litecoin Core with -txindex=1 for full transaction lookup.");
+            }
+            ParentChainType::Signet => {
+                ui.label("Use Bitcoin Core with -signet -txindex=1 flags.");
+            }
+            ParentChainType::Regtest => {
+                ui.label("Use Bitcoin Core with -regtest -txindex=1 flags for local testing.");
+            }
+        }
     }
 }

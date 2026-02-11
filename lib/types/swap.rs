@@ -137,6 +137,70 @@ impl ParentChainType {
             }
         }
     }
+
+    /// Get the default RPC port for this chain
+    ///
+    /// These are the standard mainnet RPC ports. Testnet/regtest ports differ.
+    pub fn default_rpc_port(&self) -> u16 {
+        match self {
+            Self::BTC => 8332,
+            Self::BCH => 8332,       // Bitcoin Cash ABC/BCHN default
+            Self::LTC => 9332,       // Litecoin Core default
+            Self::Signet => 38332,   // Bitcoin Signet default
+            Self::Regtest => 18443,  // Bitcoin Regtest default
+        }
+    }
+
+    /// Get the human-readable coin name for display
+    pub fn coin_name(&self) -> &'static str {
+        match self {
+            Self::BTC => "Bitcoin",
+            Self::BCH => "Bitcoin Cash",
+            Self::LTC => "Litecoin",
+            Self::Signet => "Bitcoin Signet",
+            Self::Regtest => "Bitcoin Regtest",
+        }
+    }
+
+    /// Get the number of satoshis (smallest unit) per coin
+    ///
+    /// All Bitcoin-derivative chains use 100,000,000 satoshis per coin.
+    pub fn sats_per_coin(&self) -> u64 {
+        100_000_000
+    }
+
+    /// Get the ticker symbol for this chain
+    pub fn ticker(&self) -> &'static str {
+        match self {
+            Self::BTC => "BTC",
+            Self::BCH => "BCH",
+            Self::LTC => "LTC",
+            Self::Signet => "sBTC",
+            Self::Regtest => "rBTC",
+        }
+    }
+
+    /// Get the default RPC URL hint for this chain
+    pub fn default_rpc_url_hint(&self) -> &'static str {
+        match self {
+            Self::BTC => "http://localhost:8332",
+            Self::BCH => "http://localhost:8332",
+            Self::LTC => "http://localhost:9332",
+            Self::Signet => "http://localhost:38332",
+            Self::Regtest => "http://localhost:18443",
+        }
+    }
+
+    /// Get all supported parent chain types
+    pub fn all() -> &'static [ParentChainType] {
+        &[
+            Self::BTC,
+            Self::BCH,
+            Self::LTC,
+            Self::Signet,
+            Self::Regtest,
+        ]
+    }
 }
 
 /// Swap state

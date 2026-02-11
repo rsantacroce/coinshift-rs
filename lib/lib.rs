@@ -3,7 +3,7 @@
 
 pub mod archive;
 pub mod authorization;
-pub mod bitcoin_rpc;
+pub mod parent_chain_rpc;
 pub mod mempool;
 pub mod miner;
 pub mod net;

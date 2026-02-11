@@ -204,7 +204,7 @@ async fn wait_for_locked_utxos(
     verify_swap_locks_utxos(rpc_client, swap_id, expected_locked_amount).await
 }
 
-async fn setup_swapper(
+pub async fn setup_swapper(
     bin_paths: &BinPaths,
     res_tx: mpsc::UnboundedSender<anyhow::Result<()>>,
     data_dir_suffix: &str,
@@ -228,7 +228,7 @@ async fn setup_swapper(
     Ok((sidechain, enforcer_post_setup))
 }
 
-async fn cleanup_swapper(
+pub async fn cleanup_swapper(
     sidechain: PostSetup,
     enforcer_post_setup: EnforcerPostSetup,
 ) -> anyhow::Result<()> {

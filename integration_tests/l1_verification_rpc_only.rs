@@ -17,7 +17,7 @@ use tokio::time::sleep;
 use tracing::Instrument as _;
 
 use crate::{
-    setup::{Init, PostSetup},
+    setup::PostSetup,
     util::BinPaths,
 };
 
@@ -118,7 +118,7 @@ pub fn l1_verification_rpc_only_trial(
                 async move {
                     let res =
                         l1_verification_rpc_only_task(bin_paths, res_tx.clone()).await;
-                    let _ = res_tx.unbounded_send(res);
+                    drop(res_tx.unbounded_send(res));
                 }
                 .in_current_span()
             })
