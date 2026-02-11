@@ -542,6 +542,11 @@ fn connect_event(
 /// 3. Match transactions by: l1_recipient_address and l1_amount
 /// 4. Update swap state based on found transactions and confirmations
 ///
+/// **BMM / header chain / merkle proof:** None of these are used for swap L1
+/// verification in this repo. L1 presence and confirmations are taken from the
+/// configured parent chain RPC only (no BMM reports, no per–parent-chain header
+/// chain for swaps, no merkle proof of L1 tx in block).
+///
 /// Query L1 blockchain for matching transactions and update swap.
 ///
 /// `block_hash` and `block_height` are the sidechain block where this
