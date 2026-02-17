@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use coinshift::bitcoin_rpc::{BitcoinRpcClient, RpcConfig};
+use coinshift::parent_chain_rpc::{ParentChainRpcClient, RpcConfig};
 use coinshift::types::{
     Address, ParentChainType, Swap, SwapId, SwapState, SwapTxId,
 };
@@ -923,7 +923,7 @@ impl SwapList {
             let txid_hex = self.l1_txid_input.clone();
 
             // Spawn a thread to fetch confirmations
-            let client = BitcoinRpcClient::new(rpc_config);
+            let client = ParentChainRpcClient::new(rpc_config);
             match client.get_transaction_confirmations(&txid_hex) {
                 Ok(confirmations) => {
                     tracing::info!(
@@ -1119,7 +1119,7 @@ impl SwapList {
                 "Fetching transaction from RPC for validation and confirmations"
             );
 
-            let client = BitcoinRpcClient::new(rpc_config);
+            let client = ParentChainRpcClient::new(rpc_config);
             match client.get_transaction(&self.l1_txid_input) {
                 Ok(tx_info) => {
                     let conf = tx_info.confirmations;
@@ -1495,7 +1495,7 @@ impl SwapList {
                 };
 
                 // Fetch current confirmations from RPC
-                let client = BitcoinRpcClient::new(rpc_config);
+                let client = ParentChainRpcClient::new(rpc_config);
                 match client.get_transaction_confirmations(&l1_txid_hex) {
                     Ok(new_confirmations) => {
                         // Get current confirmations from swap state

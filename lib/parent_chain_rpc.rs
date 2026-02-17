@@ -1,4 +1,8 @@
-//! Bitcoin RPC client for querying L1 blockchain transactions
+//! Parent Chain RPC client for querying L1 blockchain transactions
+//!
+//! This module provides a generic RPC client that works with any Bitcoin-compatible
+//! blockchain (Bitcoin, Bitcoin Cash, Litecoin, etc.) that implements the standard
+//! Bitcoin Core JSON-RPC interface.
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -68,12 +72,16 @@ pub struct Vin {
     pub vout: Option<u32>,
 }
 
-pub struct BitcoinRpcClient {
+/// RPC client for communicating with parent chain nodes (Bitcoin, Bitcoin Cash, Litecoin, etc.)
+///
+/// This client uses the standard Bitcoin Core JSON-RPC interface, which is compatible
+/// with most Bitcoin-derivative blockchains.
+pub struct ParentChainRpcClient {
     config: RpcConfig,
     client: reqwest::blocking::Client,
 }
 
-impl BitcoinRpcClient {
+impl ParentChainRpcClient {
     pub fn new(config: RpcConfig) -> Self {
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(10))
@@ -280,12 +288,14 @@ impl BitcoinRpcClient {
         Ok(blocks as u32)
     }
 
-    /// Find transactions to an address matching a specific amount
+    /// Find transactions to an address matching a specific amount.
+    /// Returns (txid, confirmations, sender_address, blockheight).
+    /// Only includes transactions that are in a block (blockheight is Some).
     pub fn find_transactions_by_address_and_amount(
         &self,
         address: &str,
         amount_sats: u64,
-    ) -> Result<Vec<(String, u32, String)>, Error> {
+    ) -> Result<Vec<(String, u32, String, Option<u32>)>, Error> {
         // Get all transactions for this address
         let txids = self.list_transactions(address)?;
         let mut matches = Vec::new();
@@ -358,9 +368,15 @@ impl BitcoinRpcClient {
                             };
 
                             let confirmations = tx.confirmations;
+                            let blockheight = tx.blockheight;
                             let sender = sender_address
                                 .unwrap_or_else(|| "unknown".to_string());
-                            matches.push((txid.clone(), confirmations, sender));
+                            matches.push((
+                                txid.clone(),
+                                confirmations,
+                                sender,
+                                blockheight,
+                            ));
                             break; // Found a match, no need to check other outputs
                         }
                     }

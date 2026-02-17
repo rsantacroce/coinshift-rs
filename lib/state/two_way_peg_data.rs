@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use fallible_iterator::FallibleIterator;
 use sneed::{RoTxn, RwTxn, db::error::Error as DbError};
 
-use crate::bitcoin_rpc::{BitcoinRpcClient, RpcConfig};
+use crate::parent_chain_rpc::{ParentChainRpcClient, RpcConfig};
 use crate::{
     state::{
         Error, State, WITHDRAWAL_BUNDLE_FAILURE_GAP, WithdrawalBundleInfo,
@@ -542,19 +542,30 @@ fn connect_event(
 /// 3. Match transactions by: l1_recipient_address and l1_amount
 /// 4. Update swap state based on found transactions and confirmations
 ///
+/// **BMM / header chain / merkle proof:** None of these are used for swap L1
+/// verification in this repo. L1 presence and confirmations are taken from the
+/// configured parent chain RPC only (no BMM reports, no per–parent-chain header
+/// chain for swaps, no merkle proof of L1 tx in block).
+///
 /// Query L1 blockchain for matching transactions and update swap.
 ///
 /// `block_hash` and `block_height` are the sidechain block where this
 /// validation occurs.
+///
+/// Enforces L1 transaction uniqueness: the same (parent_chain, l1_txid) must
+/// not be associated with more than one swap. Uses `get_swap_by_l1_txid` before
+/// accepting a new L1 tx.
 fn query_and_update_swap(
+    state: &State,
+    rwtxn: &mut RwTxn,
     rpc_config: &RpcConfig,
     swap: &mut Swap,
     l1_recipient: &str,
     l1_amount: bitcoin::Amount,
     block_hash: BlockHash,
     block_height: u32,
-) -> Result<bool, crate::bitcoin_rpc::Error> {
-    let client = BitcoinRpcClient::new(rpc_config.clone());
+) -> Result<bool, Error> {
+    let client = ParentChainRpcClient::new(rpc_config.clone());
     let amount_sats = l1_amount.to_sat();
 
     // Find transactions matching address and amount
@@ -565,13 +576,26 @@ fn query_and_update_swap(
         return Ok(false);
     }
 
-    // Use the first match (most recent transaction)
+    // Only accept transactions that are confirmed and included in a block
+    let matches: Vec<_> = matches
+        .into_iter()
+        .filter(|(_, conf, _, blockheight)| *conf > 0 && blockheight.is_some())
+        .collect();
+    if matches.is_empty() {
+        tracing::debug!(
+            swap_id = %swap.id,
+            "No confirmed or block-included L1 match; rejecting unconfirmed or mempool-only tx"
+        );
+        return Ok(false);
+    }
+
+    // Use the first valid match (most recent transaction)
     // In a production system, you might want to handle multiple matches differently
-    let (txid, confirmations, sender_address) = &matches[0];
+    let (txid, confirmations, sender_address, _blockheight) = &matches[0];
 
     // Convert txid string to SwapTxId
     let txid_bytes = hex::decode(txid)
-        .map_err(|_| crate::bitcoin_rpc::Error::InvalidResponse)?;
+        .map_err(|_| crate::parent_chain_rpc::Error::InvalidResponse)?;
     let l1_txid = SwapTxId::from_bytes(&txid_bytes);
 
     // Check if this is an update or new detection
@@ -580,6 +604,21 @@ fn query_and_update_swap(
         || matches!(swap.l1_txid, SwapTxId::Hash(ref v) if v.is_empty() || v.iter().all(|&b| b == 0));
 
     if is_new {
+        // L1 transaction uniqueness: do not accept an L1 tx already used by another swap
+        if let Some(existing) =
+            state.get_swap_by_l1_txid(rwtxn, &swap.parent_chain, &l1_txid)?
+        {
+            if existing.id != swap.id {
+                tracing::info!(
+                    swap_id = %swap.id,
+                    existing_swap_id = %existing.id,
+                    l1_txid = %txid,
+                    "Rejecting L1 tx already associated with another swap"
+                );
+                return Ok(false);
+            }
+        }
+
         // New L1 transaction detected
         tracing::info!(
             swap_id = %swap.id,
@@ -732,6 +771,10 @@ fn process_coinshift_transactions(
             l1_amount_str
         );
 
+        // Swap L1 presence and confirmation count rely on the configured RPC for
+        // the swap target chain (swap.parent_chain). If no RPC is configured here,
+        // we skip L1 lookup and the swap stays Pending until RPC is set or the user
+        // manually updates via update_swap_l1_txid.
         // Query L1 blockchain for matching transactions if RPC config is available
         // Clone values to avoid borrow checker issues
         let l1_recipient_clone = swap.l1_recipient_address.clone();
@@ -743,6 +786,8 @@ fn process_coinshift_transactions(
             && let Some(rpc_config) = get_rpc_config(parent_chain_clone)
         {
             match query_and_update_swap(
+                state,
+                rwtxn,
                 &rpc_config,
                 &mut swap,
                 l1_recipient,

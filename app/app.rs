@@ -302,7 +302,7 @@ impl App {
     async fn swap_confirmation_check_task(
         node: Arc<Node>,
     ) -> Result<(), Error> {
-        use coinshift::bitcoin_rpc::{BitcoinRpcClient, RpcConfig};
+        use coinshift::parent_chain_rpc::{ParentChainRpcClient, RpcConfig};
         use coinshift::types::{ParentChainType, SwapState, SwapTxId};
         use hex;
         use serde::{Deserialize, Serialize};
@@ -415,7 +415,7 @@ impl App {
                     };
 
                     // Fetch current confirmations from RPC
-                    let client = BitcoinRpcClient::new(rpc_config);
+                    let client = ParentChainRpcClient::new(rpc_config);
                     match client.get_transaction_confirmations(&l1_txid_hex) {
                         Ok(new_confirmations) => {
                             // Get current confirmations from swap state
