@@ -1,5 +1,5 @@
 use coinshift::types::{Address, ParentChainType};
-use eframe::egui::{self, Button, Color32, ComboBox, RichText};
+use eframe::egui::{self, Button, Color32, ComboBox, RichText, TextEdit};
 
 use crate::app::App;
 
@@ -33,11 +33,20 @@ impl Default for CreateSwap {
 impl CreateSwap {
     pub fn show(&mut self, app: Option<&App>, ui: &mut egui::Ui) {
         ui.heading("Create Swap (L2 → L1)");
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new("You offer L2 (sidechain) coins and request L1. Set where you want to receive L1, then who gets your L2 and the amounts.")
+                .small()
+                .color(Color32::GRAY),
+        );
         ui.separator();
 
-        // Parent chain selection
+        // ─── What you want (L1) ─────────────────────────────────────────────
+        ui.add_space(4.0);
+        ui.label(RichText::new("What you want (L1)").strong());
+
         ui.horizontal(|ui| {
-            ui.label("Parent Chain:");
+            ui.label("Parent chain:");
             ComboBox::from_id_salt("parent_chain")
                 .selected_text(format!("{:?}", self.parent_chain))
                 .show_ui(ui, |ui| {
@@ -69,27 +78,41 @@ impl CreateSwap {
                 });
         });
 
-        // L1 recipient address
         ui.horizontal(|ui| {
-            ui.label("L1 Recipient Address:");
-            ui.text_edit_singleline(&mut self.l1_recipient_address);
+            ui.label("Your L1 address:");
+            ui.add(
+                TextEdit::singleline(&mut self.l1_recipient_address)
+                    .hint_text("Where you receive the L1 coins (e.g. bc1...)"),
+            );
         });
 
-        // L1 amount
         ui.horizontal(|ui| {
-            ui.label("L1 Amount (BTC):");
-            ui.text_edit_singleline(&mut self.l1_amount);
+            ui.label(format!(
+                "Amount you want ({})",
+                self.parent_chain.ticker()
+            ));
+            ui.add(
+                TextEdit::singleline(&mut self.l1_amount)
+                    .hint_text("e.g. 0.001"),
+            );
         });
 
-        // Open swap checkbox
-        ui.checkbox(&mut self.is_open_swap, "Open Swap (anyone can fill)");
+        ui.add_space(8.0);
+        ui.label(RichText::new("What you offer (L2)").strong());
 
-        // L2 recipient (only if not open swap)
+        ui.checkbox(
+            &mut self.is_open_swap,
+            "Open swap — anyone can fill (no specific claimer)",
+        );
+
         if !self.is_open_swap {
             ui.horizontal(|ui| {
-                ui.label("L2 Recipient Address:");
-                ui.text_edit_singleline(
-                    self.l2_recipient.get_or_insert_with(String::new),
+                ui.label("L2 claimer address:");
+                ui.add(
+                    TextEdit::singleline(
+                        self.l2_recipient.get_or_insert_with(String::new),
+                    )
+                    .hint_text("Who can claim (sends L1, then gets L2)"),
                 );
                 if ui.button("Use My Address").clicked()
                     && let Some(app) = app
@@ -108,18 +131,25 @@ impl CreateSwap {
             self.l2_recipient = None;
         }
 
-        // L2 amount
         ui.horizontal(|ui| {
-            ui.label("L2 Amount (BTC):");
-            ui.text_edit_singleline(&mut self.l2_amount);
+            ui.label("L2 amount you offer:");
+            ui.add(
+                TextEdit::singleline(&mut self.l2_amount)
+                    .hint_text("e.g. 0.001"),
+            );
         });
 
-        // Required confirmations
+        ui.add_space(8.0);
+        ui.label(RichText::new("Options").strong());
+
         ui.horizontal(|ui| {
-            ui.label("Required Confirmations:");
-            ui.text_edit_singleline(&mut self.required_confirmations);
+            ui.label("Required L1 confirmations:");
+            ui.add(
+                TextEdit::singleline(&mut self.required_confirmations)
+                    .hint_text("leave empty for default"),
+            );
             ui.label(format!(
-                "(Default: {})",
+                "(default: {})",
                 self.parent_chain.default_confirmations()
             ));
         });
