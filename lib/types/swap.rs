@@ -315,6 +315,31 @@ impl SwapTxId {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::SwapTxId;
+
+    #[test]
+    fn from_hex_requires_64_chars() {
+        // Integration tests use "aa".repeat(32) etc. — must remain valid
+        let valid = "aa".repeat(32);
+        let txid = SwapTxId::from_hex(&valid).unwrap();
+        assert_eq!(txid.to_hex(), valid);
+
+        // Reject too short (e.g. 32 chars = 16 bytes)
+        assert!(SwapTxId::from_hex("aa").is_err());
+        assert!(SwapTxId::from_hex(&"a".repeat(32)).is_err());
+
+        // Reject too long
+        assert!(SwapTxId::from_hex(&"a".repeat(65)).is_err());
+
+        // Trim and roundtrip
+        let with_spaces = format!("  {}  ", valid);
+        let txid2 = SwapTxId::from_hex(&with_spaces).unwrap();
+        assert_eq!(txid2.to_hex(), valid);
+    }
+}
+
 // Custom serde module for Option<Amount> that serializes as Option<u64>
 // This ensures proper roundtrip serialization with bincode
 mod amount_opt_serde {
