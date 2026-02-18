@@ -555,6 +555,7 @@ fn connect_event(
 /// Enforces L1 transaction uniqueness: the same (parent_chain, l1_txid) must
 /// not be associated with more than one swap. Uses `get_swap_by_l1_txid` before
 /// accepting a new L1 tx.
+#[allow(clippy::too_many_arguments)]
 fn query_and_update_swap(
     state: &State,
     rwtxn: &mut RwTxn,
@@ -579,7 +580,9 @@ fn query_and_update_swap(
     // Only accept transactions that are confirmed and included in a block
     let matches: Vec<_> = matches
         .into_iter()
-        .filter(|(_, conf, _, blockheight)| *conf > 0 && blockheight.is_some())
+        .filter(|(_, tx_info)| {
+            tx_info.confirmations > 0 && tx_info.blockheight.is_some()
+        })
         .collect();
     if matches.is_empty() {
         tracing::debug!(
@@ -591,10 +594,10 @@ fn query_and_update_swap(
 
     // Use the first valid match (most recent transaction)
     // In a production system, you might want to handle multiple matches differently
-    let (txid, confirmations, sender_address, _blockheight) = &matches[0];
+    let (sender_address, tx_info) = &matches[0];
 
     // Convert txid string to SwapTxId
-    let txid_bytes = hex::decode(txid)
+    let txid_bytes = hex::decode(&tx_info.txid)
         .map_err(|_| crate::parent_chain_rpc::Error::InvalidResponse)?;
     let l1_txid = SwapTxId::from_bytes(&txid_bytes);
 
@@ -607,23 +610,22 @@ fn query_and_update_swap(
         // L1 transaction uniqueness: do not accept an L1 tx already used by another swap
         if let Some(existing) =
             state.get_swap_by_l1_txid(rwtxn, &swap.parent_chain, &l1_txid)?
+            && existing.id != swap.id
         {
-            if existing.id != swap.id {
-                tracing::info!(
-                    swap_id = %swap.id,
-                    existing_swap_id = %existing.id,
-                    l1_txid = %txid,
-                    "Rejecting L1 tx already associated with another swap"
-                );
-                return Ok(false);
-            }
+            tracing::info!(
+                swap_id = %swap.id,
+                existing_swap_id = %existing.id,
+                l1_txid = %tx_info.txid,
+                "Rejecting L1 tx already associated with another swap"
+            );
+            return Ok(false);
         }
 
         // New L1 transaction detected
         tracing::info!(
             swap_id = %swap.id,
-            l1_txid = %txid,
-            confirmations = %confirmations,
+            l1_txid = %tx_info.txid,
+            confirmations = %tx_info.confirmations,
             sender = %sender_address,
             is_open_swap = %swap.l2_recipient.is_none(),
             "Detected new L1 transaction for swap"
@@ -638,11 +640,11 @@ fn query_and_update_swap(
         swap.set_l1_txid_validation_block(block_hash, block_height);
 
         // Update state based on confirmations
-        if *confirmations >= swap.required_confirmations {
+        if tx_info.confirmations >= swap.required_confirmations {
             swap.state = SwapState::ReadyToClaim;
         } else {
             swap.state = SwapState::WaitingConfirmations(
-                *confirmations,
+                tx_info.confirmations,
                 swap.required_confirmations,
             );
         }
@@ -655,19 +657,19 @@ fn query_and_update_swap(
             _ => 0,
         };
 
-        if *confirmations > current_confirmations {
+        if tx_info.confirmations > current_confirmations {
             tracing::debug!(
                 swap_id = %swap.id,
                 old_confirmations = %current_confirmations,
-                new_confirmations = %confirmations,
+                new_confirmations = %tx_info.confirmations,
                 "Updating swap confirmations"
             );
 
-            if *confirmations >= swap.required_confirmations {
+            if tx_info.confirmations >= swap.required_confirmations {
                 swap.state = SwapState::ReadyToClaim;
             } else {
                 swap.state = SwapState::WaitingConfirmations(
-                    *confirmations,
+                    tx_info.confirmations,
                     swap.required_confirmations,
                 );
             }

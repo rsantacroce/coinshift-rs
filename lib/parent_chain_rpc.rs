@@ -289,13 +289,13 @@ impl ParentChainRpcClient {
     }
 
     /// Find transactions to an address matching a specific amount.
-    /// Returns (txid, confirmations, sender_address, blockheight).
+    /// Returns (sender_address, tx_info).
     /// Only includes transactions that are in a block (blockheight is Some).
     pub fn find_transactions_by_address_and_amount(
         &self,
         address: &str,
         amount_sats: u64,
-    ) -> Result<Vec<(String, u32, String, Option<u32>)>, Error> {
+    ) -> Result<Vec<(String, TransactionInfo)>, Error> {
         // Get all transactions for this address
         let txids = self.list_transactions(address)?;
         let mut matches = Vec::new();
@@ -366,17 +366,9 @@ impl ParentChainRpcClient {
                             } else {
                                 None
                             };
-
-                            let confirmations = tx.confirmations;
-                            let blockheight = tx.blockheight;
                             let sender = sender_address
                                 .unwrap_or_else(|| "unknown".to_string());
-                            matches.push((
-                                txid.clone(),
-                                confirmations,
-                                sender,
-                                blockheight,
-                            ));
+                            matches.push((sender, tx));
                             break; // Found a match, no need to check other outputs
                         }
                     }
