@@ -194,6 +194,86 @@ cd /home/parallels/Projects/coinshift-rs/docs
 
 ---
 
+## Utilities: Addresses and Cross-Chain Sends
+
+### Generate addresses (mainchain / parentchain)
+
+**Script:** `generate_addresses.sh`
+
+Always shows **getblockchaininfo** for both mainchain and parentchain, then generates addresses.
+
+```bash
+# Mainchain address only (default)
+./generate_addresses.sh
+
+# Parentchain address only
+./generate_addresses.sh parentchain
+
+# One address from each chain
+./generate_addresses.sh both
+```
+
+### Send from mainchain or parentchain
+
+**Script:** `send_from.sh`
+
+Send from mainchain or parentchain to any address. Always shows **getblockchaininfo** for both chains before and after.
+
+```bash
+# Send 1 BTC from mainchain to address
+./send_from.sh mainchain <address> 1.0
+
+# Send 0.5 BTC from parentchain to address
+./send_from.sh parentchain <address> 0.5
+```
+
+Requires the source chain node to be running. Get an address from the other chain with `./generate_addresses.sh mainchain` or `./generate_addresses.sh parentchain`.
+
+### Initialize coinshift_app for test users (Alice, Bob, Charles)
+
+**Script:** `init_coinshift_app.sh`
+
+Creates a data directory and a `start.sh` script for each user at a given location. Each user gets unique RPC and P2P ports so you can run multiple coinshift_app instances for testing.
+
+```bash
+# Initialize one user (e.g. at ./test-users)
+./init_coinshift_app.sh ./test-users alice
+./init_coinshift_app.sh ./test-users bob
+./init_coinshift_app.sh ./test-users charles
+
+# Initialize all three at once
+./init_coinshift_app.sh ./test-users all
+```
+
+Then start each user's app (enforcer and mainchain should be running):
+
+```bash
+./test-users/alice/start.sh
+./test-users/bob/start.sh
+./test-users/charles/start.sh
+```
+
+Ports: Alice RPC 6010 / P2P 4010, Bob 6020/4020, Charles 6030/4030. Override binary with `COINSHIFT_APP`, mainchain gRPC with `MAINCHAIN_GRPC_URL`.
+
+### Get transactions / UTXOs for an address
+
+**Script:** `get_txs_from_address.sh`
+
+Shows **getblockchaininfo** for both chains, then unspent outputs (and wallet receive history if the address is in the wallet) for a given address.
+
+```bash
+# On mainchain (default)
+./get_txs_from_address.sh mainchain bcrt1q9z447588v4ua9nna7ff83zqfrcqlj8xklf4nl5
+
+# On parentchain
+./get_txs_from_address.sh parentchain bcrt1q...
+
+# Address only → mainchain
+./get_txs_from_address.sh bcrt1q9z447588v4ua9nna7ff83zqfrcqlj8xklf4nl5
+```
+
+---
+
 ## Complete Workflow Example
 
 Here's a complete example for a fresh setup:
