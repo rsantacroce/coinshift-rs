@@ -523,8 +523,7 @@ impl RpcServer for RpcServerImpl {
 
         let accumulator =
             self.app.node.get_tip_accumulator().map_err(custom_err)?;
-        let l2_claimer_for_tx =
-            swap.l2_recipient.is_none().then_some(recipient);
+        let l2_claimer_for_tx = swap.l2_recipient.is_none().then_some(recipient);
         let tx = self
             .app
             .wallet

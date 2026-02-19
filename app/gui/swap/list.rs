@@ -661,8 +661,7 @@ impl SwapList {
             None => return,
         };
 
-        let l2_claimer_for_tx =
-            swap.l2_recipient.is_none().then_some(recipient);
+        let l2_claimer_for_tx = swap.l2_recipient.is_none().then_some(recipient);
         let tx = match app.wallet.create_swap_claim_tx(
             &accumulator,
             *swap_id,
@@ -1232,9 +1231,7 @@ impl SwapList {
         let l2_claimer_address = if swap.l2_recipient.is_none() {
             let s = self.l2_recipient_input.trim();
             if s.is_empty() {
-                tracing::error!(
-                    "Open swap requires L2 address (that will receive L2 amount) when updating with L1 txid"
-                );
+                tracing::error!("Open swap requires L2 address (that will receive L2 amount) when updating with L1 txid");
                 return;
             }
             match s.parse() {

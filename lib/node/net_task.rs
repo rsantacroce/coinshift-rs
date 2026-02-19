@@ -27,13 +27,13 @@ use tokio_stream::StreamNotifyClose;
 use super::mainchain_task::{self, MainchainTaskHandle};
 use crate::{
     archive::{self, Archive},
+    parent_chain_rpc::RpcConfig,
     mempool::{self, MemPool},
     net::{
         self, Net, PeerConnectionError, PeerConnectionInfo,
         PeerConnectionMailboxError, PeerConnectionMessage, PeerInfoRx,
         PeerRequest, PeerResponse, PeerStateId, peer_message,
     },
-    parent_chain_rpc::RpcConfig,
     state::{self, State},
     types::{
         BmmResult, Body, Header, MerkleRoot, ParentChainType, Tip,
@@ -423,9 +423,8 @@ fn reorg_to_tip(
                 crate::parent_chain_rpc::load_rpc_config_from_path(&p, chain)
             }) as Box<dyn Fn(ParentChainType) -> Option<RpcConfig>>
         });
-        let rpc_config_getter: Option<
-            &dyn Fn(ParentChainType) -> Option<RpcConfig>,
-        > = rpc_config_getter.as_ref().map(|b| b.as_ref());
+        let rpc_config_getter: Option<&dyn Fn(ParentChainType) -> Option<RpcConfig>> =
+            rpc_config_getter.as_ref().map(|b| b.as_ref());
         let () = connect_tip_(
             &mut rwtxn,
             archive,
