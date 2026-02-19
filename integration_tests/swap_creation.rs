@@ -495,7 +495,12 @@ async fn swap_creation_open_fill_task(
     let fake_l1_txid_hex = "11".repeat(32);
     sidechain
         .rpc_client
-        .update_swap_l1_txid(swap_id, fake_l1_txid_hex.clone(), 1, Some(claimer_address))
+        .update_swap_l1_txid(
+            swap_id,
+            fake_l1_txid_hex.clone(),
+            1,
+            Some(claimer_address),
+        )
         .await?;
     // Allow wallet/state tasks to catch up
     sleep(std::time::Duration::from_millis(500)).await;
@@ -524,10 +529,7 @@ async fn swap_creation_open_fill_task(
     );
 
     // Claim the swap: recipient is taken from stored l2_claimer_address (can pass None)
-    let claim_txid = sidechain
-        .rpc_client
-        .claim_swap(swap_id, None)
-        .await?;
+    let claim_txid = sidechain.rpc_client.claim_swap(swap_id, None).await?;
     tracing::info!(swap_id = %swap_id, claim_txid = %claim_txid, "Claimed swap");
 
     // Mine the claim transaction into a block

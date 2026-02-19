@@ -34,9 +34,17 @@ impl Miner {
         let best_hash = &format!("{best_hash}")[0..8];
         ui.monospace(format!("{best_hash}..."));
         let running = self.running.load(atomic::Ordering::SeqCst);
+        let mainchain_up = app
+            .map(|a| a.mainchain_reachable.load(atomic::Ordering::SeqCst))
+            .unwrap_or(false);
+        let mine_enabled = !running && mainchain_up;
+        let button_label = match (app, mainchain_up) {
+            (Some(_), false) => "Mine / Refresh Block (mainchain unavailable)",
+            _ => "Mine / Refresh Block",
+        };
         if let Some(app) = app
             && ui
-                .add_enabled(!running, Button::new("Mine / Refresh Block"))
+                .add_enabled(mine_enabled, Button::new(button_label))
                 .clicked()
         {
             self.running.store(true, atomic::Ordering::SeqCst);
