@@ -404,8 +404,10 @@ pub fn load_rpc_config_from_path(
     parent_chain: ParentChainType,
 ) -> Option<RpcConfig> {
     let file_content = std::fs::read_to_string(path).ok()?;
-    let configs: std::collections::HashMap<ParentChainType, LocalRpcConfigFile> =
-        serde_json::from_str(&file_content).ok()?;
+    let configs: std::collections::HashMap<
+        ParentChainType,
+        LocalRpcConfigFile,
+    > = serde_json::from_str(&file_content).ok()?;
     let local = configs.get(&parent_chain)?;
     Some(RpcConfig {
         url: local.url.clone(),
@@ -429,7 +431,9 @@ mod tests {
     #[test]
     fn load_rpc_config_from_path_missing_file_returns_none() {
         let path = Path::new("/nonexistent/l1_rpc_configs.json");
-        assert!(load_rpc_config_from_path(path, ParentChainType::Regtest).is_none());
+        assert!(
+            load_rpc_config_from_path(path, ParentChainType::Regtest).is_none()
+        );
     }
 
     #[test]
