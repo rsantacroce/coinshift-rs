@@ -128,6 +128,7 @@ where
         network: Network,
         runtime: &tokio::runtime::Runtime,
         wallet: Option<Arc<crate::wallet::Wallet>>,
+        l1_rpc_config_path: Option<std::path::PathBuf>,
     ) -> Result<Self, Error>
     where
         mainchain::ValidatorClient<MainchainTransport>: Clone,
@@ -220,6 +221,7 @@ where
             peer_info_rx,
             state.clone(),
             wallet_clone,
+            l1_rpc_config_path,
         );
         tracing::info!("Node::new: NetTaskHandle created");
         let cusf_mainchain_wallet =
