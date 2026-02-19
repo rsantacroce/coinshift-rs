@@ -103,9 +103,8 @@ pub struct NodeConfig<MainchainTransport = Channel> {
     pub datadir: std::path::PathBuf,
     pub bind_addr: SocketAddr,
     pub cusf_mainchain: mainchain::ValidatorClient<MainchainTransport>,
-    pub cusf_mainchain_wallet: Option<
-        mainchain::WalletClient<MainchainTransport>,
-    >,
+    pub cusf_mainchain_wallet:
+        Option<mainchain::WalletClient<MainchainTransport>>,
     pub network: Network,
     pub wallet: Option<Arc<crate::wallet::Wallet>>,
     pub l1_rpc_config_path: Option<std::path::PathBuf>,
@@ -210,8 +209,13 @@ where
             );
         tracing::info!("Node::new: MainchainTaskHandle created");
         tracing::info!(bind_addr = %config.bind_addr, "Node::new: Creating Net");
-        let (net, peer_info_rx) =
-            Net::new(&env, archive.clone(), config.network, state.clone(), config.bind_addr)?;
+        let (net, peer_info_rx) = Net::new(
+            &env,
+            archive.clone(),
+            config.network,
+            state.clone(),
+            config.bind_addr,
+        )?;
         tracing::info!("Node::new: Net created");
         tracing::info!("Node::new: Creating NetTaskHandle");
         let wallet_clone = config.wallet.clone();
@@ -229,8 +233,9 @@ where
             config.l1_rpc_config_path,
         );
         tracing::info!("Node::new: NetTaskHandle created");
-        let cusf_mainchain_wallet =
-            config.cusf_mainchain_wallet.map(|wallet| Arc::new(Mutex::new(wallet)));
+        let cusf_mainchain_wallet = config
+            .cusf_mainchain_wallet
+            .map(|wallet| Arc::new(Mutex::new(wallet)));
         // Check for corrupted swaps and automatically reconstruct if needed
         {
             tracing::info!("Node::new: Checking for corrupted swaps");
