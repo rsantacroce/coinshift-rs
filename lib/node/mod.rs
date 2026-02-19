@@ -2,7 +2,6 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
     net::SocketAddr,
-    path::Path,
     sync::Arc,
 };
 
@@ -98,6 +97,20 @@ impl From<state::Error> for Error {
     }
 }
 
+/// Configuration for constructing a [`Node`].
+#[derive(Clone)]
+pub struct NodeConfig<MainchainTransport = Channel> {
+    pub datadir: std::path::PathBuf,
+    pub bind_addr: SocketAddr,
+    pub cusf_mainchain: mainchain::ValidatorClient<MainchainTransport>,
+    pub cusf_mainchain_wallet: Option<
+        mainchain::WalletClient<MainchainTransport>,
+    >,
+    pub network: Network,
+    pub wallet: Option<Arc<crate::wallet::Wallet>>,
+    pub l1_rpc_config_path: Option<std::path::PathBuf>,
+}
+
 #[derive(Clone)]
 pub struct Node<MainchainTransport = Channel> {
     archive: Archive,
@@ -119,16 +132,8 @@ where
     MainchainTransport: proto::Transport,
 {
     pub fn new(
-        datadir: &Path,
-        bind_addr: SocketAddr,
-        cusf_mainchain: mainchain::ValidatorClient<MainchainTransport>,
-        cusf_mainchain_wallet: Option<
-            mainchain::WalletClient<MainchainTransport>,
-        >,
-        network: Network,
+        config: NodeConfig<MainchainTransport>,
         runtime: &tokio::runtime::Runtime,
-        wallet: Option<Arc<crate::wallet::Wallet>>,
-        l1_rpc_config_path: Option<std::path::PathBuf>,
     ) -> Result<Self, Error>
     where
         mainchain::ValidatorClient<MainchainTransport>: Clone,
@@ -138,7 +143,7 @@ where
         >>::Future: Send,
     {
         tracing::info!("Node::new: Starting initialization");
-        let env_path = datadir.join("data.mdb");
+        let env_path = config.datadir.join("data.mdb");
         tracing::debug!(env_path = %env_path.display(), "Node::new: Setting up database path");
         // let _ = std::fs::remove_dir_all(&env_path);
         std::fs::create_dir_all(&env_path)?;
@@ -201,15 +206,15 @@ where
             MainchainTaskHandle::new(
                 env.clone(),
                 archive.clone(),
-                cusf_mainchain.clone(),
+                config.cusf_mainchain.clone(),
             );
         tracing::info!("Node::new: MainchainTaskHandle created");
-        tracing::info!(bind_addr = %bind_addr, "Node::new: Creating Net");
+        tracing::info!(bind_addr = %config.bind_addr, "Node::new: Creating Net");
         let (net, peer_info_rx) =
-            Net::new(&env, archive.clone(), network, state.clone(), bind_addr)?;
+            Net::new(&env, archive.clone(), config.network, state.clone(), config.bind_addr)?;
         tracing::info!("Node::new: Net created");
         tracing::info!("Node::new: Creating NetTaskHandle");
-        let wallet_clone = wallet.clone();
+        let wallet_clone = config.wallet.clone();
         let net_task = NetTaskHandle::new(
             runtime,
             env.clone(),
@@ -221,11 +226,11 @@ where
             peer_info_rx,
             state.clone(),
             wallet_clone,
-            l1_rpc_config_path,
+            config.l1_rpc_config_path,
         );
         tracing::info!("Node::new: NetTaskHandle created");
         let cusf_mainchain_wallet =
-            cusf_mainchain_wallet.map(|wallet| Arc::new(Mutex::new(wallet)));
+            config.cusf_mainchain_wallet.map(|wallet| Arc::new(Mutex::new(wallet)));
         // Check for corrupted swaps and automatically reconstruct if needed
         {
             tracing::info!("Node::new: Checking for corrupted swaps");
@@ -274,7 +279,7 @@ where
         );
         Ok(Self {
             archive,
-            cusf_mainchain: Arc::new(Mutex::new(cusf_mainchain)),
+            cusf_mainchain: Arc::new(Mutex::new(config.cusf_mainchain)),
             cusf_mainchain_wallet,
             env,
             mainchain_task,
@@ -282,7 +287,7 @@ where
             net,
             net_task,
             state,
-            wallet,
+            wallet: config.wallet,
         })
     }
 

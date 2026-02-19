@@ -679,16 +679,16 @@ impl App {
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("coinshift")
             .join("l1_rpc_configs.json");
-        let node = Node::new(
-            &config.datadir,
-            config.net_addr,
+        let node_config = node::NodeConfig {
+            datadir: config.datadir.clone(),
+            bind_addr: config.net_addr,
             cusf_mainchain,
             cusf_mainchain_wallet,
-            config.network,
-            &runtime,
-            Some(Arc::new(wallet.clone())),
-            Some(l1_rpc_config_path),
-        )?;
+            network: config.network,
+            wallet: Some(Arc::new(wallet.clone())),
+            l1_rpc_config_path: Some(l1_rpc_config_path),
+        };
+        let node = Node::new(node_config, &runtime)?;
         let node_elapsed = node_start.elapsed();
         tracing::info!(
             elapsed_secs = node_elapsed.as_secs_f64(),
