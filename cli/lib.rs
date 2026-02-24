@@ -1,12 +1,20 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, time::Duration};
 
 use clap::{Parser, Subcommand};
 use http::HeaderMap;
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder};
 
+use coinshift::parent_chain_rpc::RpcConfig;
 use coinshift::types::{Address, ParentChainType, SwapId, Txid};
 use coinshift_app_rpc_api::RpcClient;
 use tracing_subscriber::{filter::Targets, layer::SubscriberExt as _};
+
+fn l1_config_path() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("coinshift")
+        .join("l1_rpc_configs.json")
+}
 
 fn parse_swap_id(s: &str) -> anyhow::Result<SwapId> {
     let bytes = hex::decode(s).map_err(|e| anyhow::anyhow!("invalid swap_id hex: {}", e))?;
@@ -66,6 +74,11 @@ pub enum Command {
     ForgetPeer { addr: SocketAddr },
     /// Generate a mnemonic seed phrase
     GenerateMnemonic,
+    /// Show L1 RPC config (all chains or one if --chain is set)
+    GetL1Config {
+        #[arg(long, value_parser = parse_parent_chain)]
+        chain: Option<ParentChainType>,
+    },
     /// Get the best mainchain block hash
     GetBestMainchainBlockHash,
     /// Get the best sidechain block hash
@@ -126,6 +139,17 @@ pub enum Command {
     RemoveFromMempool { txid: Txid },
     /// Set the wallet seed from a mnemonic seed phrase
     SetSeedFromMnemonic { mnemonic: String },
+    /// Set L1 RPC config for a parent chain (url required; user/password optional)
+    SetL1Config {
+        #[arg(long, value_parser = parse_parent_chain)]
+        parent_chain: ParentChainType,
+        #[arg(long)]
+        url: String,
+        #[arg(long, default_value = "")]
+        user: String,
+        #[arg(long, default_value = "")]
+        password: String,
+    },
     /// Get total sidechain wealth
     SidechainWealth,
     /// Stop the node
@@ -262,6 +286,21 @@ where
             serde_json::to_string_pretty(&bmm_inclusions)?
         }
         Command::GenerateMnemonic => rpc_client.generate_mnemonic().await?,
+        Command::GetL1Config { chain } => {
+            let path = l1_config_path();
+            let configs: HashMap<ParentChainType, RpcConfig> = if path.exists() {
+                let s = std::fs::read_to_string(&path)
+                    .map_err(|e| anyhow::anyhow!("read config: {}: {}", path.display(), e))?;
+                serde_json::from_str(&s).unwrap_or_default()
+            } else {
+                HashMap::new()
+            };
+            let out: HashMap<ParentChainType, RpcConfig> = match chain {
+                Some(c) => configs.into_iter().filter(|(k, _)| *k == c).collect(),
+                None => configs,
+            };
+            serde_json::to_string_pretty(&out)?
+        }
         Command::GetNewAddress => {
             let address = rpc_client.get_new_address().await?;
             format!("{address}")
@@ -340,6 +379,39 @@ where
         Command::SetSeedFromMnemonic { mnemonic } => {
             let () = rpc_client.set_seed_from_mnemonic(mnemonic).await?;
             String::default()
+        }
+        Command::SetL1Config {
+            parent_chain,
+            url,
+            user,
+            password,
+        } => {
+            let path = l1_config_path();
+            let mut configs: HashMap<ParentChainType, RpcConfig> = if path.exists() {
+                let s = std::fs::read_to_string(&path)
+                    .map_err(|e| anyhow::anyhow!("read config: {}: {}", path.display(), e))?;
+                serde_json::from_str(&s).unwrap_or_default()
+            } else {
+                HashMap::new()
+            };
+            configs.insert(
+                parent_chain,
+                RpcConfig {
+                    url: url.clone(),
+                    user: user.clone(),
+                    password: password.clone(),
+                },
+            );
+            if let Some(parent) = path.parent() {
+                drop(std::fs::create_dir_all(parent));
+            }
+            std::fs::write(&path, serde_json::to_string_pretty(&configs)?)
+                .map_err(|e| anyhow::anyhow!("write config: {}: {}", path.display(), e))?;
+            format!(
+                "L1 RPC config saved for {} at {}",
+                parent_chain.coin_name(),
+                path.display()
+            )
         }
         Command::SidechainWealth => {
             let sidechain_wealth = rpc_client.sidechain_wealth_sats().await?;
