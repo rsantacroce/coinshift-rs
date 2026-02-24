@@ -1,4 +1,6 @@
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{
+    collections::HashMap, net::SocketAddr, path::PathBuf, time::Duration,
+};
 
 use clap::{Parser, Subcommand};
 use http::HeaderMap;
@@ -17,10 +19,11 @@ fn l1_config_path() -> PathBuf {
 }
 
 fn parse_swap_id(s: &str) -> anyhow::Result<SwapId> {
-    let bytes = hex::decode(s).map_err(|e| anyhow::anyhow!("invalid swap_id hex: {}", e))?;
-    let arr: [u8; 32] = bytes
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("swap_id must be 32 bytes (64 hex chars)"))?;
+    let bytes = hex::decode(s)
+        .map_err(|e| anyhow::anyhow!("invalid swap_id hex: {}", e))?;
+    let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+        anyhow::anyhow!("swap_id must be 32 bytes (64 hex chars)")
+    })?;
     Ok(SwapId(arr))
 }
 
@@ -31,7 +34,10 @@ fn parse_parent_chain(s: &str) -> anyhow::Result<ParentChainType> {
         "ltc" => Ok(ParentChainType::LTC),
         "signet" => Ok(ParentChainType::Signet),
         "regtest" => Ok(ParentChainType::Regtest),
-        _ => anyhow::bail!("unknown parent chain: {} (use btc, bch, ltc, signet, regtest)", s),
+        _ => anyhow::bail!(
+            "unknown parent chain: {} (use btc, bch, ltc, signet, regtest)",
+            s
+        ),
     }
 }
 
@@ -248,7 +254,8 @@ where
             swap_id,
             l2_claimer_address,
         } => {
-            let txid = rpc_client.claim_swap(swap_id, l2_claimer_address).await?;
+            let txid =
+                rpc_client.claim_swap(swap_id, l2_claimer_address).await?;
             format!("Swap claimed: txid={}", txid)
         }
         Command::CreateDeposit {
@@ -288,15 +295,19 @@ where
         Command::GenerateMnemonic => rpc_client.generate_mnemonic().await?,
         Command::GetL1Config { chain } => {
             let path = l1_config_path();
-            let configs: HashMap<ParentChainType, RpcConfig> = if path.exists() {
-                let s = std::fs::read_to_string(&path)
-                    .map_err(|e| anyhow::anyhow!("read config: {}: {}", path.display(), e))?;
+            let configs: HashMap<ParentChainType, RpcConfig> = if path.exists()
+            {
+                let s = std::fs::read_to_string(&path).map_err(|e| {
+                    anyhow::anyhow!("read config: {}: {}", path.display(), e)
+                })?;
                 serde_json::from_str(&s).unwrap_or_default()
             } else {
                 HashMap::new()
             };
             let out: HashMap<ParentChainType, RpcConfig> = match chain {
-                Some(c) => configs.into_iter().filter(|(k, _)| *k == c).collect(),
+                Some(c) => {
+                    configs.into_iter().filter(|(k, _)| *k == c).collect()
+                }
                 None => configs,
             };
             serde_json::to_string_pretty(&out)?
@@ -387,9 +398,12 @@ where
             password,
         } => {
             let path = l1_config_path();
-            let mut configs: HashMap<ParentChainType, RpcConfig> = if path.exists() {
-                let s = std::fs::read_to_string(&path)
-                    .map_err(|e| anyhow::anyhow!("read config: {}: {}", path.display(), e))?;
+            let mut configs: HashMap<ParentChainType, RpcConfig> = if path
+                .exists()
+            {
+                let s = std::fs::read_to_string(&path).map_err(|e| {
+                    anyhow::anyhow!("read config: {}: {}", path.display(), e)
+                })?;
                 serde_json::from_str(&s).unwrap_or_default()
             } else {
                 HashMap::new()
@@ -406,7 +420,9 @@ where
                 drop(std::fs::create_dir_all(parent));
             }
             std::fs::write(&path, serde_json::to_string_pretty(&configs)?)
-                .map_err(|e| anyhow::anyhow!("write config: {}: {}", path.display(), e))?;
+                .map_err(|e| {
+                    anyhow::anyhow!("write config: {}: {}", path.display(), e)
+                })?;
             format!(
                 "L1 RPC config saved for {} at {}",
                 parent_chain.coin_name(),
