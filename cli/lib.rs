@@ -4,9 +4,20 @@ use clap::{Parser, Subcommand};
 use http::HeaderMap;
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder};
 
-use coinshift::types::{Address, Txid};
+use coinshift::types::{Address, ParentChainType, Txid};
 use coinshift_app_rpc_api::RpcClient;
 use tracing_subscriber::{filter::Targets, layer::SubscriberExt as _};
+
+fn parse_parent_chain(s: &str) -> anyhow::Result<ParentChainType> {
+    match s.to_lowercase().as_str() {
+        "btc" => Ok(ParentChainType::BTC),
+        "bch" => Ok(ParentChainType::BCH),
+        "ltc" => Ok(ParentChainType::LTC),
+        "signet" => Ok(ParentChainType::Signet),
+        "regtest" => Ok(ParentChainType::Regtest),
+        _ => anyhow::bail!("unknown parent chain: {} (use btc, bch, ltc, signet, regtest)", s),
+    }
+}
 
 #[derive(Clone, Debug, Subcommand)]
 #[command(arg_required_else_help(true))]
@@ -15,6 +26,23 @@ pub enum Command {
     Balance,
     /// Connect to a peer
     ConnectPeer { addr: SocketAddr },
+    /// Create a swap (L2 → L1). Optional l2_recipient = open swap.
+    CreateSwap {
+        #[arg(long, value_parser = parse_parent_chain)]
+        parent_chain: ParentChainType,
+        #[arg(long)]
+        l1_recipient_address: String,
+        #[arg(long)]
+        l1_amount_sats: u64,
+        #[arg(long)]
+        l2_recipient: Option<Address>,
+        #[arg(long)]
+        l2_amount_sats: u64,
+        #[arg(long)]
+        required_confirmations: Option<u32>,
+        #[arg(long)]
+        fee_sats: u64,
+    },
     /// Deposit to address
     CreateDeposit {
         address: Address,
@@ -134,6 +162,28 @@ where
         Command::ConnectPeer { addr } => {
             let () = rpc_client.connect_peer(addr).await?;
             String::default()
+        }
+        Command::CreateSwap {
+            parent_chain,
+            l1_recipient_address,
+            l1_amount_sats,
+            l2_recipient,
+            l2_amount_sats,
+            required_confirmations,
+            fee_sats,
+        } => {
+            let (swap_id, txid) = rpc_client
+                .create_swap(
+                    parent_chain,
+                    l1_recipient_address,
+                    l1_amount_sats,
+                    l2_recipient,
+                    l2_amount_sats,
+                    required_confirmations,
+                    fee_sats,
+                )
+                .await?;
+            format!("Swap created: id={} txid={}", swap_id, txid)
         }
         Command::CreateDeposit {
             address,
