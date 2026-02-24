@@ -93,12 +93,21 @@ pub enum Command {
         #[arg(long)]
         l2_claimer_address: Option<Address>,
     },
+    /// Get status of a swap by ID
+    GetSwapStatus {
+        #[arg(long, value_parser = parse_swap_id)]
+        swap_id: SwapId,
+    },
     /// Get the height of the latest failed withdrawal bundle
     LatestFailedWithdrawalBundleHeight,
     /// List peers
     ListPeers,
     /// List all UTXOs
     ListUtxos,
+    /// List all swaps
+    ListSwaps,
+    /// List swaps for a specific recipient address
+    ListSwapsByRecipient { recipient: Address },
     /// Recover wallet from mnemonic phrase (sets seed, then shows addresses and balance)
     RecoverFromMnemonic { mnemonic: String },
     /// Reconstruct all swaps from the blockchain
@@ -269,6 +278,10 @@ where
             let blockcount = rpc_client.getblockcount().await?;
             format!("{blockcount}")
         }
+        Command::GetSwapStatus { swap_id } => {
+            let status = rpc_client.get_swap_status(swap_id).await?;
+            serde_json::to_string_pretty(&status)?
+        }
         Command::LatestFailedWithdrawalBundleHeight => {
             let height =
                 rpc_client.latest_failed_withdrawal_bundle_height().await?;
@@ -281,6 +294,14 @@ where
         Command::ListUtxos => {
             let utxos = rpc_client.list_utxos().await?;
             serde_json::to_string_pretty(&utxos)?
+        }
+        Command::ListSwaps => {
+            let swaps = rpc_client.list_swaps().await?;
+            serde_json::to_string_pretty(&swaps)?
+        }
+        Command::ListSwapsByRecipient { recipient } => {
+            let swaps = rpc_client.list_swaps_by_recipient(recipient).await?;
+            serde_json::to_string_pretty(&swaps)?
         }
         Command::RecoverFromMnemonic { mnemonic } => {
             rpc_client.set_seed_from_mnemonic(mnemonic).await?;
