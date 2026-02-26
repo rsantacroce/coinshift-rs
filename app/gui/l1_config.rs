@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use coinshift::parent_chain_rpc::{self, RpcConfig as LibRpcConfig};
 use coinshift::types::ParentChainType;
 use eframe::egui::{self, Button, Color32, ComboBox, RichText, TextEdit};
 use poll_promise::Promise;
@@ -37,8 +38,10 @@ pub struct L1Config {
 
 impl Default for L1Config {
     fn default() -> Self {
+        let supported = parent_chain_rpc::supported_l1_parent_chain_types();
+        let first = supported.first().copied().unwrap_or(ParentChainType::Signet);
         Self {
-            selected_parent_chain: ParentChainType::BTC,
+            selected_parent_chain: first,
             rpc_url: String::new(),
             rpc_user: String::new(),
             rpc_password: String::new(),
@@ -70,22 +73,61 @@ impl L1Config {
                 HashMap<ParentChainType, RpcConfig>,
             >(&file_content)
         {
-            self.configs = stored_configs;
-            // Load the currently selected parent chain's config
+            // Only keep configs that match supported predefined configs
+            self.configs = HashMap::new();
+            for (chain, rpc) in &stored_configs {
+                let lib_rpc = LibRpcConfig {
+                    url: rpc.url.clone(),
+                    user: rpc.user.clone(),
+                    password: rpc.password.clone(),
+                };
+                if parent_chain_rpc::is_supported_l1_config(*chain, &lib_rpc) {
+                    self.configs.insert(*chain, rpc.clone());
+                }
+            }
             if let Some(config) = self.configs.get(&self.selected_parent_chain)
             {
                 self.rpc_url = config.url.clone();
                 self.rpc_user = config.user.clone();
                 self.rpc_password = config.password.clone();
+            } else {
+                self.load_predefined_for_selected();
             }
+        } else {
+            self.load_predefined_for_selected();
+        }
+    }
+
+    /// Fill URL/user/password from the predefined config for the selected chain.
+    fn load_predefined_for_selected(&mut self) {
+        let predefined = parent_chain_rpc::supported_l1_configs();
+        if let Some((_, rpc)) = predefined
+            .into_iter()
+            .find(|(c, _)| *c == self.selected_parent_chain)
+        {
+            self.rpc_url = rpc.url;
+            self.rpc_user = rpc.user;
+            self.rpc_password = rpc.password;
+        } else {
+            self.rpc_url.clear();
+            self.rpc_user.clear();
+            self.rpc_password.clear();
         }
     }
 
     fn save(&mut self, _ctx: &egui::Context) {
-        let config = RpcConfig {
-            url: self.rpc_url.clone(),
-            user: self.rpc_user.clone(),
-            password: self.rpc_password.clone(),
+        // Only save predefined config for the selected chain
+        let config = if let Some((_, rpc)) = parent_chain_rpc::supported_l1_configs()
+            .into_iter()
+            .find(|(c, _)| *c == self.selected_parent_chain)
+        {
+            RpcConfig {
+                url: rpc.url,
+                user: rpc.user,
+                password: rpc.password,
+            }
+        } else {
+            return;
         };
 
         self.configs
@@ -107,15 +149,7 @@ impl L1Config {
     }
 
     fn load_selected_chain_config(&mut self) {
-        if let Some(config) = self.configs.get(&self.selected_parent_chain) {
-            self.rpc_url = config.url.clone();
-            self.rpc_user = config.user.clone();
-            self.rpc_password = config.password.clone();
-        } else {
-            self.rpc_url.clear();
-            self.rpc_user.clear();
-            self.rpc_password.clear();
-        }
+        self.load_predefined_for_selected();
         // Reset connection status when switching chains
         *self.connection_status.lock().unwrap() = ConnectionStatus::Unknown;
         self.status_promise = None;
@@ -148,12 +182,13 @@ impl L1Config {
         use std::time::Duration;
 
         let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(10))
             .build()?;
 
+        // Use jsonrpc "1.0" to match nodes that accept curl-style requests (e.g. BCH test4)
         let request = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
+            "jsonrpc": "1.0",
+            "id": "coinshift",
             "method": "getblockchaininfo",
             "params": []
         });
@@ -222,26 +257,29 @@ impl L1Config {
         ui.label("Each parent chain can have its own RPC configuration.");
         ui.add_space(10.0);
 
-        // Parent chain selection
+        // Parent chain selection (only supported options)
         ui.horizontal(|ui| {
             ui.label("Parent Chain:");
             let previous_chain = self.selected_parent_chain;
+            let supported = parent_chain_rpc::supported_l1_parent_chain_types();
+            let label = match self.selected_parent_chain {
+                ParentChainType::Signet => "Bitcoin Signet (sBTC)",
+                ParentChainType::BCH => "Bitcoin Cash Testnet 4 (BCH)",
+                _ => "Select network",
+            };
             ComboBox::from_id_salt("l1_config_parent_chain")
-                .selected_text(format!(
-                    "{} ({})",
-                    self.selected_parent_chain.coin_name(),
-                    self.selected_parent_chain.ticker()
-                ))
+                .selected_text(label)
                 .show_ui(ui, |ui| {
-                    for chain in ParentChainType::all() {
+                    for chain in supported {
+                        let option_label = match chain {
+                            ParentChainType::Signet => "Bitcoin Signet (sBTC)",
+                            ParentChainType::BCH => "Bitcoin Cash Testnet 4 (BCH)",
+                            _ => continue,
+                        };
                         ui.selectable_value(
                             &mut self.selected_parent_chain,
                             *chain,
-                            format!(
-                                "{} ({})",
-                                chain.coin_name(),
-                                chain.ticker()
-                            ),
+                            option_label,
                         );
                     }
                 });
@@ -273,7 +311,8 @@ impl L1Config {
 
         ui.horizontal(|ui| {
             ui.label("RPC URL:");
-            ui.add(
+            ui.add_enabled(
+                false,
                 TextEdit::singleline(&mut self.rpc_url)
                     .hint_text(
                         self.selected_parent_chain.default_rpc_url_hint(),
@@ -281,12 +320,18 @@ impl L1Config {
                     .desired_width(300.0),
             );
         });
+        ui.label(
+            RichText::new("Only predefined networks are supported. URL cannot be changed.")
+                .small()
+                .color(Color32::GRAY),
+        );
 
         ui.add_space(5.0);
 
         ui.horizontal(|ui| {
             ui.label("RPC User:");
-            ui.add(
+            ui.add_enabled(
+                false,
                 TextEdit::singleline(&mut self.rpc_user)
                     .hint_text("rpcuser")
                     .desired_width(300.0),
@@ -297,7 +342,8 @@ impl L1Config {
 
         ui.horizontal(|ui| {
             ui.label("RPC Password:");
-            ui.add(
+            ui.add_enabled(
+                false,
                 TextEdit::singleline(&mut self.rpc_password)
                     .hint_text("rpcpassword")
                     .password(true)
@@ -343,13 +389,11 @@ impl L1Config {
 
         match status {
             ConnectionStatus::Unknown => {
-                if let Some(saved_config) =
-                    self.configs.get(&self.selected_parent_chain)
-                    && !saved_config.url.is_empty()
-                {
-                    let url = saved_config.url.clone();
-                    let user = saved_config.user.clone();
-                    let password = saved_config.password.clone();
+                // Allow check using current URL (predefined when chain selected) even if not saved yet
+                if !self.rpc_url.is_empty() {
+                    let url = self.rpc_url.clone();
+                    let user = self.rpc_user.clone();
+                    let password = self.rpc_password.clone();
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("●").color(Color32::GRAY));
                         ui.label("Status: Unknown");
@@ -378,13 +422,10 @@ impl L1Config {
                     );
                     ui.label(format!("Latest Block Height: {}", block_height));
                 });
-                if let Some(saved_config) =
-                    self.configs.get(&self.selected_parent_chain)
-                    && !saved_config.url.is_empty()
-                {
-                    let url = saved_config.url.clone();
-                    let user = saved_config.user.clone();
-                    let password = saved_config.password.clone();
+                if !self.rpc_url.is_empty() {
+                    let url = self.rpc_url.clone();
+                    let user = self.rpc_user.clone();
+                    let password = self.rpc_password.clone();
                     if ui.button("Refresh").clicked() {
                         self.check_connection(&url, &user, &password);
                     }
@@ -401,13 +442,10 @@ impl L1Config {
                 });
                 let error_msg = format!("Error: {}", error);
                 ui.label(RichText::new(error_msg).small().color(Color32::RED));
-                if let Some(saved_config) =
-                    self.configs.get(&self.selected_parent_chain)
-                    && !saved_config.url.is_empty()
-                {
-                    let url = saved_config.url.clone();
-                    let user = saved_config.user.clone();
-                    let password = saved_config.password.clone();
+                if !self.rpc_url.is_empty() {
+                    let url = self.rpc_url.clone();
+                    let user = self.rpc_user.clone();
+                    let password = self.rpc_password.clone();
                     if ui.button("Retry").clicked() {
                         self.check_connection(&url, &user, &password);
                     }
