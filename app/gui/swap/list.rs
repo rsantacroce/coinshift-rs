@@ -490,9 +490,13 @@ impl SwapList {
                 SwapState::ReadyToClaim => {
                     if swap.l2_recipient.is_none() {
                         // Open swap - need claimer address
-                        // Pre-fill from L2 recipient input if available and claimer address is empty
-                        if self.claimer_address_input.is_empty() && !self.l2_recipient_input.is_empty() {
-                            self.claimer_address_input = self.l2_recipient_input.clone();
+                        // Pre-fill from stored L2 claimer (set when L1 tx was submitted), or L2 recipient input
+                        if self.claimer_address_input.is_empty() {
+                            if let Some(ref stored) = swap.l2_claimer_address {
+                                self.claimer_address_input = stored.to_string();
+                            } else if !self.l2_recipient_input.is_empty() {
+                                self.claimer_address_input = self.l2_recipient_input.clone();
+                            }
                         }
 
                         ui.horizontal(|ui| {
@@ -642,12 +646,13 @@ impl SwapList {
             return;
         }
 
-        // Determine recipient: pre-specified swap uses swap.l2_recipient, open swap uses claimer address
+        // Determine recipient: pre-specified uses swap.l2_recipient; open uses stored or provided claimer address
         let recipient = swap
             .l2_recipient
+            .or(swap.l2_claimer_address)
             .or(l2_claimer_address)
             .ok_or_else(|| {
-                tracing::error!("Open swap requires claimer address");
+                tracing::error!("Open swap requires claimer address (or set when L1 tx was submitted)");
             })
             .ok();
 
@@ -656,12 +661,14 @@ impl SwapList {
             None => return,
         };
 
+        let l2_claimer_for_tx =
+            swap.l2_recipient.is_none().then_some(recipient);
         let tx = match app.wallet.create_swap_claim_tx(
             &accumulator,
             *swap_id,
             recipient,
             locked_outputs,
-            l2_claimer_address,
+            l2_claimer_for_tx,
         ) {
             Ok(tx) => tx,
             Err(err) => {
@@ -1099,14 +1106,16 @@ impl SwapList {
             return;
         }
 
-        let l1_txid_bytes = match hex::decode(&self.l1_txid_input) {
-            Ok(bytes) => bytes,
+        let l1_txid = match SwapTxId::from_hex(&self.l1_txid_input) {
+            Ok(txid) => txid,
             Err(err) => {
-                tracing::error!("Invalid hex: {err}");
+                tracing::error!(error = %err, "Invalid L1 txid: must be exactly 64 hex characters (32 bytes)");
                 return;
             }
         };
-        let l1_txid = SwapTxId::from_bytes(&l1_txid_bytes);
+
+        // Use normalized hex (same bytes we're storing) for RPC validation
+        let l1_txid_hex = l1_txid.to_hex();
 
         // Fetch transaction from RPC to validate amount and recipient address
         let confirmations = if let Some(rpc_config) =
@@ -1114,13 +1123,13 @@ impl SwapList {
         {
             tracing::debug!(
                 swap_id = %swap.id,
-                l1_txid = %self.l1_txid_input,
+                l1_txid = %l1_txid_hex,
                 rpc_url = %rpc_config.url,
                 "Fetching transaction from RPC for validation and confirmations"
             );
 
             let client = ParentChainRpcClient::new(rpc_config);
-            match client.get_transaction(&self.l1_txid_input) {
+            match client.get_transaction(&l1_txid_hex) {
                 Ok(tx_info) => {
                     let conf = tx_info.confirmations;
 
@@ -1158,7 +1167,7 @@ impl SwapList {
                                 found_matching_output = true;
                                 tracing::info!(
                                     swap_id = %swap.id,
-                                    l1_txid = %self.l1_txid_input,
+                                    l1_txid = %l1_txid_hex,
                                     recipient = %expected_recipient,
                                     amount_sats = %expected_amount_sats,
                                     "Transaction validated: matches swap requirements"
@@ -1170,7 +1179,7 @@ impl SwapList {
                         if !found_matching_output {
                             tracing::error!(
                                 swap_id = %swap.id,
-                                l1_txid = %self.l1_txid_input,
+                                l1_txid = %l1_txid_hex,
                                 expected_recipient = %expected_recipient,
                                 expected_amount_sats = %expected_amount_sats,
                                 "Transaction validation failed: No output matches expected recipient address and amount"
@@ -1182,14 +1191,14 @@ impl SwapList {
                         // This might be an open swap or a swap without L1 details
                         tracing::warn!(
                             swap_id = %swap.id,
-                            l1_txid = %self.l1_txid_input,
+                            l1_txid = %l1_txid_hex,
                             "Cannot validate transaction: swap missing expected L1 recipient address or amount"
                         );
                     }
 
                     tracing::info!(
                         swap_id = %swap.id,
-                        l1_txid = %self.l1_txid_input,
+                        l1_txid = %l1_txid_hex,
                         confirmations = %conf,
                         "Fetched transaction and confirmations from L1 RPC"
                     );
@@ -1199,7 +1208,7 @@ impl SwapList {
                 Err(err) => {
                     tracing::error!(
                         swap_id = %swap.id,
-                        l1_txid = %self.l1_txid_input,
+                        l1_txid = %l1_txid_hex,
                         error = %err,
                         error_debug = ?err,
                         "Failed to fetch transaction from RPC"
@@ -1217,9 +1226,27 @@ impl SwapList {
             0
         };
 
-        // For open swaps, we don't store the L1 sender address
-        // The claimer will provide their L2 address when claiming
         let l1_claimer_address = None;
+
+        // For open swaps, require and store the L2 address Bob declared (claim only valid for this address)
+        let l2_claimer_address = if swap.l2_recipient.is_none() {
+            let s = self.l2_recipient_input.trim();
+            if s.is_empty() {
+                tracing::error!(
+                    "Open swap requires L2 address (that will receive L2 amount) when updating with L1 txid"
+                );
+                return;
+            }
+            match s.parse() {
+                Ok(addr) => Some(addr),
+                Err(err) => {
+                    tracing::error!("Invalid L2 address: {err}");
+                    return;
+                }
+            }
+        } else {
+            None
+        };
 
         let mut rwtxn = match app.node.env().write_txn() {
             Ok(txn) => txn,
@@ -1259,6 +1286,7 @@ impl SwapList {
             l1_txid,
             confirmations,
             l1_claimer_address,
+            l2_claimer_address,
             block_hash,
             block_height,
         ) {
@@ -1484,15 +1512,7 @@ impl SwapList {
             // Get RPC config for this swap's parent chain
             if let Some(rpc_config) = self.load_rpc_config(swap.parent_chain) {
                 // Convert L1 txid to hex string for RPC query
-                let l1_txid_hex = match &swap.l1_txid {
-                    SwapTxId::Hash32(hash) => {
-                        use bitcoin::hashes::Hash;
-                        let txid = bitcoin::Txid::from_slice(hash)
-                            .unwrap_or_else(|_| bitcoin::Txid::all_zeros());
-                        txid.to_string()
-                    }
-                    SwapTxId::Hash(bytes) => hex::encode(bytes),
-                };
+                let l1_txid_hex = swap.l1_txid.to_hex();
 
                 // Fetch current confirmations from RPC
                 let client = ParentChainRpcClient::new(rpc_config);
@@ -1552,6 +1572,7 @@ impl SwapList {
                                     swap.l1_txid.clone(),
                                     new_confirmations,
                                     None, // l1_claimer_address - not needed for confirmation updates
+                                    None, // l2_claimer_address - not changed on confirmation update
                                     block_hash,
                                     block_height,
                                 )

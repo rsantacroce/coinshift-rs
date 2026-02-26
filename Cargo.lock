@@ -1476,6 +1476,8 @@ dependencies = [
  "clap",
  "coinshift",
  "coinshift_app_rpc_api",
+ "dirs",
+ "hex 0.4.3",
  "http",
  "jsonrpsee",
  "serde_json",
