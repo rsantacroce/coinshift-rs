@@ -237,10 +237,10 @@ impl L1Config {
             "L1 Config: connection test response"
         );
 
-        if let Some(error) = json.get("error") {
-            if !error.is_null() {
-                anyhow::bail!("RPC error: {}", error);
-            }
+        if let Some(error) = json.get("error")
+            && !error.is_null()
+        {
+            anyhow::bail!("RPC error: {}", error);
         }
 
         let result = json

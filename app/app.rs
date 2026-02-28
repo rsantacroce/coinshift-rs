@@ -125,6 +125,7 @@ pub struct App {
     pub local_pool: LocalPoolHandle,
     /// Set by the L1 sync task: true when the mainchain (parentchain for mining) is reachable.
     /// Mining is only allowed when this is true so we can fetch blocks from the mainchain.
+    #[allow(dead_code)]
     pub mainchain_reachable: Arc<AtomicBool>,
 }
 

@@ -242,7 +242,12 @@ fn main() -> anyhow::Result<()> {
             chains.push(ParentChainType::BCH);
         }
         parent_chain_rpc::write_l1_config_file(&path, &chains)?;
-        eprintln!(
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stdout)
+            .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
+            .with_target(false)
+            .init();
+        tracing::info!(
             "L1 config written to {} (Signet: {}, BCH Testnet4: {})",
             path.display(),
             l1_signet,
