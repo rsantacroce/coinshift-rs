@@ -533,6 +533,7 @@ impl SwapList {
                     ui.separator();
                     ui.label(egui::RichText::new("⏳ Waiting for Confirmations").heading().color(egui::Color32::YELLOW));
                     ui.label(format!("Current confirmations: {}/{}", current, required));
+                    ui.label(egui::RichText::new("Cancel and Delete are not available while the swap is waiting for confirmations.").small().color(egui::Color32::GRAY));
 
                     if *current < *required {
                         let remaining = required - current;

@@ -852,6 +852,13 @@ impl State {
         // Get swap to update indexes
         // Use get_swap which handles deserialization errors gracefully
         if let Some(swap) = self.get_swap(rwtxn, swap_id)? {
+            // Only Pending or Cancelled swaps can be deleted (not WaitingConfirmations, ReadyToClaim, Completed)
+            if !matches!(swap.state, SwapState::Pending | SwapState::Cancelled) {
+                return Err(Error::InvalidTransaction(format!(
+                    "Swap {} cannot be deleted (state: {:?}). Only Pending or Cancelled swaps can be deleted.",
+                    swap_id, swap.state
+                )));
+            }
             // Delete from swaps_by_l1_txid
             let l1_txid_key = (swap.parent_chain, swap.l1_txid.clone());
             self.swaps_by_l1_txid
@@ -1505,6 +1512,14 @@ impl State {
         let mut swap = self
             .get_swap(rwtxn, swap_id)?
             .ok_or_else(|| Error::SwapNotFound { swap_id: *swap_id })?;
+
+        // Only Pending swaps can be filled (L1 tx set). Reject once already filled or waiting confirmations.
+        if !matches!(swap.state, SwapState::Pending) {
+            return Err(Error::InvalidTransaction(format!(
+                "Swap {} cannot be updated (state: {:?}). Only Pending swaps can be filled with an L1 transaction.",
+                swap_id, swap.state
+            )));
+        }
 
         // Only accept confirmed L1 transactions (consistent with query_and_update_swap)
         if confirmations == 0 {
