@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use coinshift::parent_chain_rpc::{self, RpcConfig as LibRpcConfig};
+use coinshift::parent_chain_rpc;
 use coinshift::types::ParentChainType;
 use eframe::egui::{self, Button, Color32, ComboBox, RichText, TextEdit};
 use poll_promise::Promise;
@@ -76,18 +76,7 @@ impl L1Config {
                 HashMap<ParentChainType, RpcConfig>,
             >(&file_content)
         {
-            // Only keep configs that match supported predefined configs
-            self.configs = HashMap::new();
-            for (chain, rpc) in &stored_configs {
-                let lib_rpc = LibRpcConfig {
-                    url: rpc.url.clone(),
-                    user: rpc.user.clone(),
-                    password: rpc.password.clone(),
-                };
-                if parent_chain_rpc::is_supported_l1_config(*chain, &lib_rpc) {
-                    self.configs.insert(*chain, rpc.clone());
-                }
-            }
+            self.configs = stored_configs;
             if let Some(config) = self.configs.get(&self.selected_parent_chain)
             {
                 self.rpc_url = config.url.clone();
@@ -119,19 +108,11 @@ impl L1Config {
     }
 
     fn save(&mut self, _ctx: &egui::Context) {
-        // Only save predefined config for the selected chain
-        let config = if let Some((_, rpc)) =
-            parent_chain_rpc::supported_l1_configs()
-                .into_iter()
-                .find(|(c, _)| *c == self.selected_parent_chain)
-        {
-            RpcConfig {
-                url: rpc.url,
-                user: rpc.user,
-                password: rpc.password,
-            }
-        } else {
-            return;
+        // Save the user's current input fields for the selected chain
+        let config = RpcConfig {
+            url: self.rpc_url.clone(),
+            user: self.rpc_user.clone(),
+            password: self.rpc_password.clone(),
         };
 
         tracing::info!(

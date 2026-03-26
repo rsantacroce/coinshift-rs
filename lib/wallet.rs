@@ -882,6 +882,69 @@ impl Wallet {
         Ok(())
     }
 
+    /// Scan derived addresses against a set of known UTXO addresses to
+    /// recover the wallet's address index after restoring from seed.
+    /// Uses a gap limit: stops after `gap` consecutive derived addresses
+    /// that are not found in `utxo_addresses`.
+    pub fn recover_addresses_from_utxo_set(
+        &self,
+        utxo_addresses: &HashSet<Address>,
+    ) -> Result<usize, Error> {
+        if utxo_addresses.is_empty() {
+            return Ok(0);
+        }
+        let seed: Vec<u8> = {
+            let txn = self.env.read_txn().map_err(EnvError::from)?;
+            match self.seed.try_get(&txn, &0).map_err(DbError::from)? {
+                Some(s) => s.to_vec(),
+                None => return Ok(0),
+            }
+        };
+        const GAP_LIMIT: u32 = 20;
+        let mut gap = 0u32;
+        let mut recovered = 0usize;
+        let mut index = 0u32;
+        while gap < GAP_LIMIT && index < Self::MAX_RECOVERY_INDEX {
+            let address = Self::derive_address_for_index(&seed, index)?;
+            if utxo_addresses.contains(&address) {
+                // Check if already indexed
+                let already_indexed = {
+                    let txn =
+                        self.env.read_txn().map_err(EnvError::from)?;
+                    self.address_to_index
+                        .try_get(&txn, &address)
+                        .map_err(DbError::from)?
+                        .is_some()
+                };
+                if !already_indexed {
+                    let mut txn =
+                        self.env.write_txn().map_err(EnvError::from)?;
+                    let index_bytes = index.to_be_bytes();
+                    self.index_to_address
+                        .put(&mut txn, &index_bytes, &address)
+                        .map_err(DbError::from)?;
+                    self.address_to_index
+                        .put(&mut txn, &address, &index_bytes)
+                        .map_err(DbError::from)?;
+                    txn.commit().map_err(RwTxnError::from)?;
+                    recovered += 1;
+                }
+                gap = 0;
+            } else {
+                gap += 1;
+            }
+            index += 1;
+        }
+        if recovered > 0 {
+            tracing::info!(
+                recovered,
+                last_index = index,
+                "Recovered wallet addresses from UTXO set"
+            );
+        }
+        Ok(recovered)
+    }
+
     fn get_signing_key(
         &self,
         rotxn: &RoTxn,

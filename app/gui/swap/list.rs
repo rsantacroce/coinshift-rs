@@ -36,6 +36,7 @@ pub struct SwapList {
     searched_swap: Option<Swap>,     // Swap found by search
     status_filter: SwapStatusFilter, // Filter swaps by status
     search_error: Option<String>,    // Error message for search
+    claim_error: Option<String>,     // Error message for claim operations
 }
 
 impl Default for SwapList {
@@ -54,6 +55,7 @@ impl Default for SwapList {
             searched_swap: None,
             status_filter: SwapStatusFilter::All,
             search_error: None,
+            claim_error: None,
         }
     }
 }
@@ -177,6 +179,20 @@ impl SwapList {
                 ui.label(egui::RichText::new(msg).color(egui::Color32::GREEN));
                 if ui.button("✕").clicked() {
                     self.success_message = None;
+                }
+            });
+            ui.separator();
+        }
+
+        // Show claim error if present
+        if let Some(err_msg) = self.claim_error.clone() {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format!("❌ {}", err_msg))
+                        .color(egui::Color32::RED),
+                );
+                if ui.button("✕").clicked() {
+                    self.claim_error = None;
                 }
             });
             ui.separator();
@@ -493,36 +509,45 @@ impl SwapList {
                 }
                 SwapState::ReadyToClaim => {
                     if swap.l2_recipient.is_none() {
-                        // Open swap - need claimer address
-                        // Pre-fill from stored L2 claimer (set when L1 tx was submitted), or L2 recipient input
-                        if self.claimer_address_input.is_empty() {
-                            if let Some(ref stored) = swap.l2_claimer_address {
-                                self.claimer_address_input = stored.to_string();
-                            } else if !self.l2_recipient_input.is_empty() {
-                                self.claimer_address_input = self.l2_recipient_input.clone();
-                            }
-                        }
-
-                        ui.horizontal(|ui| {
-                            ui.label("Claimer Address:");
-                            ui.text_edit_singleline(&mut self.claimer_address_input);
+                        // Open swap
+                        if let Some(ref stored) = swap.l2_claimer_address {
+                            // Address was already declared when L1 txid was submitted — just show it and claim
+                            ui.horizontal(|ui| {
+                                ui.label("Claimer Address:");
+                                ui.label(stored.to_string());
+                            });
                             if ui
-                                .add_enabled(
-                                    app.is_some() && !self.claimer_address_input.is_empty(),
-                                    Button::new("Claim"),
-                                )
+                                .add_enabled(app.is_some(), Button::new("Claim"))
                                 .clicked()
                             && let Some(app) = app {
-                                let claimer_addr: Address = match self.claimer_address_input.parse() {
-                                    Ok(addr) => addr,
-                                    Err(err) => {
-                                        tracing::error!("Invalid address: {err}");
-                                        return;
-                                    }
-                                };
-                                self.claim_swap(app, &swap.id, Some(claimer_addr));
+                                self.claim_swap(app, &swap.id, None);
                             }
-                        });
+                        } else {
+                            // No stored address — need claimer to provide one
+                            if self.claimer_address_input.is_empty() && !self.l2_recipient_input.is_empty() {
+                                self.claimer_address_input = self.l2_recipient_input.clone();
+                            }
+                            ui.horizontal(|ui| {
+                                ui.label("Claimer Address:");
+                                ui.text_edit_singleline(&mut self.claimer_address_input);
+                                if ui
+                                    .add_enabled(
+                                        app.is_some() && !self.claimer_address_input.is_empty(),
+                                        Button::new("Claim"),
+                                    )
+                                    .clicked()
+                                && let Some(app) = app {
+                                    let claimer_addr: Address = match self.claimer_address_input.parse() {
+                                        Ok(addr) => addr,
+                                        Err(err) => {
+                                            tracing::error!("Invalid address: {err}");
+                                            return;
+                                        }
+                                    };
+                                    self.claim_swap(app, &swap.id, Some(claimer_addr));
+                                }
+                            });
+                        }
                     } else {
                         // Regular swap - claim with recipient address
                         if ui
@@ -688,6 +713,7 @@ impl SwapList {
 
         tracing::info!("Swap claimed: swap_id={}, txid={}", swap_id, txid);
         self.claimer_address_input.clear();
+        self.claim_error = None;
         self.success_message = Some(format!(
             "Swap claimed successfully! Transaction ID: {}",
             txid
@@ -903,7 +929,16 @@ impl SwapList {
                 password: local_config.password.clone(),
             });
         }
-        None
+
+        // Fall back to predefined config if no saved config exists
+        coinshift::parent_chain_rpc::supported_l1_configs()
+            .into_iter()
+            .find(|(c, _)| *c == parent_chain)
+            .map(|(_, rpc)| RpcConfig {
+                url: rpc.url,
+                user: rpc.user,
+                password: rpc.password,
+            })
     }
 
     fn fetch_confirmations_from_rpc(&mut self, _app: &App, swap: &Swap) {
