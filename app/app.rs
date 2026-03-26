@@ -68,6 +68,30 @@ impl From<node::Error> for Error {
     }
 }
 
+fn recover_wallet_addresses(
+    node: &Node,
+    wallet: &Wallet,
+) -> Result<(), Error> {
+    if !wallet.has_seed()? {
+        return Ok(());
+    }
+    let all_utxos = node.get_all_utxos()?;
+    if all_utxos.is_empty() {
+        return Ok(());
+    }
+    let utxo_addresses: std::collections::HashSet<_> =
+        all_utxos.values().map(|o| o.address).collect();
+    let recovered =
+        wallet.recover_addresses_from_utxo_set(&utxo_addresses)?;
+    if recovered > 0 {
+        tracing::info!(
+            recovered,
+            "Recovered wallet addresses from node UTXO set"
+        );
+    }
+    Ok(())
+}
+
 fn update_wallet(node: &Node, wallet: &Wallet) -> Result<(), Error> {
     tracing::trace!("starting wallet update");
     let addresses = wallet.get_addresses()?;
@@ -136,7 +160,16 @@ impl App {
         wallet: Wallet,
     ) -> Result<(), Error> {
         let mut state_changes = node.watch_state();
+        // Track whether we've successfully recovered addresses.
+        // If the chain was empty at startup, we need to recover
+        // once blocks start arriving.
+        let mut needs_recovery = wallet.get_addresses()?.is_empty()
+            && wallet.has_seed().unwrap_or(false);
         while let Some(()) = state_changes.next().await {
+            if needs_recovery {
+                recover_wallet_addresses(&node, &wallet)?;
+                needs_recovery = wallet.get_addresses()?.is_empty();
+            }
             let () = update(&node, &mut utxos.write(), &wallet)?;
         }
         Ok(())
@@ -739,6 +772,12 @@ impl App {
         } else {
             tracing::info!("No sidechain tip found (chain is empty)");
         }
+
+        // Recover wallet addresses from the UTXO set before the initial
+        // wallet update. This handles restoring a wallet from mnemonic
+        // against an already-synced chain: without this, the address
+        // index would be empty and update_wallet would find no UTXOs.
+        recover_wallet_addresses(node.as_ref(), &wallet)?;
 
         // Perform initial wallet update to populate wallet with all existing UTXOs
         tracing::info!(
