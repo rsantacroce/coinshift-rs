@@ -909,8 +909,7 @@ impl Wallet {
             if utxo_addresses.contains(&address) {
                 // Check if already indexed
                 let already_indexed = {
-                    let txn =
-                        self.env.read_txn().map_err(EnvError::from)?;
+                    let txn = self.env.read_txn().map_err(EnvError::from)?;
                     self.address_to_index
                         .try_get(&txn, &address)
                         .map_err(DbError::from)?

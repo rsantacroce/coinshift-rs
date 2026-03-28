@@ -68,10 +68,7 @@ impl From<node::Error> for Error {
     }
 }
 
-fn recover_wallet_addresses(
-    node: &Node,
-    wallet: &Wallet,
-) -> Result<(), Error> {
+fn recover_wallet_addresses(node: &Node, wallet: &Wallet) -> Result<(), Error> {
     if !wallet.has_seed()? {
         return Ok(());
     }
@@ -81,8 +78,7 @@ fn recover_wallet_addresses(
     }
     let utxo_addresses: std::collections::HashSet<_> =
         all_utxos.values().map(|o| o.address).collect();
-    let recovered =
-        wallet.recover_addresses_from_utxo_set(&utxo_addresses)?;
+    let recovered = wallet.recover_addresses_from_utxo_set(&utxo_addresses)?;
     if recovered > 0 {
         tracing::info!(
             recovered,
@@ -142,6 +138,10 @@ pub struct App {
     pub node: Arc<Node>,
     pub wallet: Wallet,
     pub miner: Option<Arc<TokioRwLock<Miner>>>,
+    /// Separate wallet client for deposits, so deposits don't block on the
+    /// miner write lock (which is held for the entire BMM confirmation).
+    cusf_mainchain_wallet:
+        Option<mainchain::WalletClient<tonic::transport::Channel>>,
     pub utxos: Arc<RwLock<HashMap<OutPoint, Output>>>,
     task: Arc<JoinHandle<()>>,
     pub transaction: Arc<RwLock<Transaction>>,
@@ -167,10 +167,25 @@ impl App {
             && wallet.has_seed().unwrap_or(false);
         while let Some(()) = state_changes.next().await {
             if needs_recovery {
-                recover_wallet_addresses(&node, &wallet)?;
-                needs_recovery = wallet.get_addresses()?.is_empty();
+                match recover_wallet_addresses(&node, &wallet) {
+                    Ok(()) => {
+                        needs_recovery = wallet
+                            .get_addresses()
+                            .map_or(true, |a| a.is_empty());
+                    }
+                    Err(err) => {
+                        let err = anyhow::Error::from(err);
+                        tracing::error!(
+                            "Failed to recover wallet addresses: {err:#}"
+                        );
+                    }
+                }
             }
-            let () = update(&node, &mut utxos.write(), &wallet)?;
+            let update_result = update(&node, &mut utxos.write(), &wallet);
+            if let Err(err) = update_result {
+                let err = anyhow::Error::from(err);
+                tracing::error!("Failed to update wallet: {err:#}");
+            }
         }
         Ok(())
     }
@@ -715,7 +730,7 @@ impl App {
             datadir: config.datadir.clone(),
             bind_addr: config.net_addr,
             cusf_mainchain,
-            cusf_mainchain_wallet,
+            cusf_mainchain_wallet: cusf_mainchain_wallet.clone(),
             network: config.network,
             wallet: Some(Arc::new(wallet.clone())),
             l1_rpc_config_path: Some(l1_rpc_config_path),
@@ -827,6 +842,7 @@ impl App {
         Ok(Self {
             node,
             wallet,
+            cusf_mainchain_wallet,
             miner,
             utxos,
             task: Arc::new(task),
@@ -1162,16 +1178,14 @@ impl App {
             amount,
             fee
         );
-        let Some(miner) = self.miner.as_ref() else {
+        let Some(wallet_client) = self.cusf_mainchain_wallet.as_ref() else {
             return Err(Error::NoCusfMainchainWalletClient);
         };
+        let mut wallet_client = wallet_client.clone();
         self.runtime.block_on(async {
-            let mut miner_write = miner.write().await;
-            let txid = miner_write
-                .cusf_mainchain_wallet
+            let txid = wallet_client
                 .create_deposit_tx(address, amount.to_sat(), fee.to_sat())
                 .await?;
-            drop(miner_write);
             Ok(txid)
         })
     }
