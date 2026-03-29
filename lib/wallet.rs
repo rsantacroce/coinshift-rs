@@ -739,6 +739,7 @@ impl Wallet {
         &self,
         transaction: Transaction,
     ) -> Result<AuthorizedTransaction, Error> {
+        let is_swap_claim = matches!(transaction.data, TxData::SwapClaim { .. });
         let mut authorizations = Vec::with_capacity(transaction.inputs.len());
         for (outpoint, _) in &transaction.inputs {
             let key = OutPointKey::from(outpoint);
@@ -759,6 +760,30 @@ impl Wallet {
                 let index = match index {
                     Some(idx) => BigEndian::read_u32(&idx),
                     None => {
+                        // For SwapClaim transactions, SwapPending inputs are
+                        // owned by the swap creator, not the claimer. Sign
+                        // with the claimer's own key (index 0) instead.
+                        if is_swap_claim
+                            && spent_utxo.content.is_swap_pending()
+                        {
+                            let txn = self
+                                .env
+                                .read_txn()
+                                .map_err(EnvError::from)?;
+                            let signing_key =
+                                self.get_signing_key(&txn, 0)?;
+                            let signature =
+                                crate::authorization::sign(
+                                    &signing_key,
+                                    &transaction,
+                                )?;
+                            authorizations.push(Authorization {
+                                verifying_key: signing_key
+                                    .verifying_key(),
+                                signature,
+                            });
+                            break;
+                        }
                         self.ensure_address_indexed(&spent_utxo.address)?;
                         continue;
                     }

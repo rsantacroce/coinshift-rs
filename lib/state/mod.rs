@@ -423,11 +423,22 @@ impl State {
             }
         }
 
+        let is_swap_claim =
+            matches!(transaction.transaction.data, TxData::SwapClaim { .. });
         for (authorization, spent_utxo) in transaction
             .authorizations
             .iter()
             .zip(filled_transaction.spent_utxos.iter())
         {
+            // For SwapClaim transactions, SwapPending inputs are owned by
+            // the swap creator but spent by the claimer.  The swap
+            // validation (validate_swap_claim) already ensures the claim
+            // is legitimate (ReadyToClaim, correct recipient, locked
+            // output), so we skip the address-matching check for those
+            // inputs.
+            if is_swap_claim && spent_utxo.content.is_swap_pending() {
+                continue;
+            }
             if authorization.get_address() != spent_utxo.address {
                 return Err(Error::WrongPubKeyForAddress);
             }
