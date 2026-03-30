@@ -15,7 +15,7 @@ use crate::{
         AccumulatorDiff, AggregatedWithdrawal, AmountOverflowError, BlockHash,
         GetValue, InPoint, M6id, OutPoint, OutPointKey, Output, OutputContent,
         ParentChainType, PointedOutput, PointedOutputRef, SpentOutput, Swap,
-        SwapState, SwapTxId, WithdrawalBundle, WithdrawalBundleEvent,
+        SwapId, SwapState, SwapTxId, WithdrawalBundle, WithdrawalBundleEvent,
         WithdrawalBundleStatus, hash,
         proto::mainchain::{BlockEvent, TwoWayPegData},
     },
@@ -732,11 +732,28 @@ fn process_coinshift_transactions(
         if let Some(expires_at) = swap.expires_at_height
             && block_height >= expires_at
         {
+            // Unlock all outputs locked to this swap so the creator can spend them again
+            let mut unlocked_count = 0u32;
+            let locked_outputs: Vec<(OutPointKey, SwapId)> = state
+                .locked_swap_outputs
+                .iter(rwtxn)
+                .map_err(DbError::from)?
+                .map(|(key, sid)| Ok((key, sid)))
+                .collect()?;
+            for (outpoint_key, locked_swap_id) in locked_outputs {
+                if locked_swap_id == swap.id {
+                    let outpoint: OutPoint = outpoint_key.into();
+                    state.unlock_output_from_swap(rwtxn, &outpoint)?;
+                    unlocked_count += 1;
+                }
+            }
+
             tracing::info!(
                 swap_id = %swap.id,
                 block_height = %block_height,
                 expires_at = %expires_at,
-                "Swap expired, marking as cancelled"
+                unlocked_outputs = %unlocked_count,
+                "Swap expired, unlocking outputs and marking as cancelled"
             );
             swap.state = SwapState::Cancelled;
             state.save_swap(rwtxn, &swap)?;
