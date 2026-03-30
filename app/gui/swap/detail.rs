@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
 use coinshift::parent_chain_rpc::ParentChainRpcClient;
-use coinshift::types::{
-    Address, Swap, SwapId, SwapState, SwapTxId,
-};
+use coinshift::types::{Address, Swap, SwapId, SwapState, SwapTxId};
 use eframe::egui::{self, Button, ScrollArea};
 
 use crate::app::App;
@@ -37,11 +35,8 @@ impl Default for SwapDetail {
 
 impl SwapDetail {
     pub fn set_swap(&mut self, swap: Swap) {
-        let changed = self
-            .swap
-            .as_ref()
-            .map(|s| s.id != swap.id)
-            .unwrap_or(true);
+        let changed =
+            self.swap.as_ref().map(|s| s.id != swap.id).unwrap_or(true);
         self.swap = Some(swap);
         if changed {
             self.l1_txid_input.clear();
@@ -62,7 +57,9 @@ impl SwapDetail {
             Some(s) => s.clone(),
             None => {
                 ui.centered_and_justified(|ui| {
-                    ui.label("Select a swap from the Swap List to view details.");
+                    ui.label(
+                        "Select a swap from the Swap List to view details.",
+                    );
                 });
                 return;
             }
@@ -101,7 +98,9 @@ impl SwapDetail {
             // ── messages ───────────────────────────────────────────
             if let Some(msg) = self.success_message.clone() {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(msg).color(egui::Color32::GREEN));
+                    ui.label(
+                        egui::RichText::new(msg).color(egui::Color32::GREEN),
+                    );
                     if ui.button("X").clicked() {
                         self.success_message = None;
                     }
@@ -110,7 +109,9 @@ impl SwapDetail {
             }
             if let Some(err_msg) = self.claim_error.clone() {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(err_msg).color(egui::Color32::RED));
+                    ui.label(
+                        egui::RichText::new(err_msg).color(egui::Color32::RED),
+                    );
                     if ui.button("X").clicked() {
                         self.claim_error = None;
                     }
@@ -122,7 +123,11 @@ impl SwapDetail {
             ui.group(|ui| {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Swap ID:").strong());
-                    ui.label(egui::RichText::new(&swap_id_str).monospace().size(12.0));
+                    ui.label(
+                        egui::RichText::new(&swap_id_str)
+                            .monospace()
+                            .size(12.0),
+                    );
                     if ui.button("Copy").clicked() {
                         ui.ctx().copy_text(swap_id_str.clone());
                     }
@@ -130,8 +135,10 @@ impl SwapDetail {
 
                 if swap.created_at_height == 0 {
                     ui.label(
-                        egui::RichText::new("PENDING - in mempool, not yet in a block")
-                            .color(egui::Color32::RED),
+                        egui::RichText::new(
+                            "PENDING - in mempool, not yet in a block",
+                        )
+                        .color(egui::Color32::RED),
                     );
                 }
             });
@@ -150,8 +157,13 @@ impl SwapDetail {
                         ui.end_row();
 
                         ui.label(egui::RichText::new("State:").strong());
-                        let (state_text, state_color) = state_display(&swap.state);
-                        ui.label(egui::RichText::new(state_text).color(state_color).strong());
+                        let (state_text, state_color) =
+                            state_display(&swap.state);
+                        ui.label(
+                            egui::RichText::new(state_text)
+                                .color(state_color)
+                                .strong(),
+                        );
                         ui.end_row();
 
                         ui.label(egui::RichText::new("L2 Amount:").strong());
@@ -159,8 +171,13 @@ impl SwapDetail {
                         ui.end_row();
 
                         if let Some(l1_amount) = swap.l1_amount {
-                            ui.label(egui::RichText::new("L1 Amount:").strong());
-                            ui.label(show_l1_amount(l1_amount, swap.parent_chain));
+                            ui.label(
+                                egui::RichText::new("L1 Amount:").strong(),
+                            );
+                            ui.label(show_l1_amount(
+                                l1_amount,
+                                swap.parent_chain,
+                            ));
                             ui.end_row();
                         }
 
@@ -173,13 +190,17 @@ impl SwapDetail {
                         ui.end_row();
 
                         if let Some(addr) = &swap.l1_recipient_address {
-                            ui.label(egui::RichText::new("L1 Recipient:").strong());
+                            ui.label(
+                                egui::RichText::new("L1 Recipient:").strong(),
+                            );
                             ui.label(addr.to_string());
                             ui.end_row();
                         }
 
                         if let Some(addr) = &swap.l1_claimer_address {
-                            ui.label(egui::RichText::new("L1 Claimer:").strong());
+                            ui.label(
+                                egui::RichText::new("L1 Claimer:").strong(),
+                            );
                             ui.label(addr.to_string());
                             ui.end_row();
                         }
@@ -192,18 +213,26 @@ impl SwapDetail {
                         );
                         ui.end_row();
 
-                        ui.label(egui::RichText::new("Required Conf:").strong());
+                        ui.label(
+                            egui::RichText::new("Required Conf:").strong(),
+                        );
                         ui.label(format!("{}", swap.required_confirmations));
                         ui.end_row();
 
                         if swap.created_at_height > 0 {
-                            ui.label(egui::RichText::new("Created at height:").strong());
+                            ui.label(
+                                egui::RichText::new("Created at height:")
+                                    .strong(),
+                            );
                             ui.label(format!("{}", swap.created_at_height));
                             ui.end_row();
                         }
 
                         if let Some(expires) = swap.expires_at_height {
-                            ui.label(egui::RichText::new("Expires at height:").strong());
+                            ui.label(
+                                egui::RichText::new("Expires at height:")
+                                    .strong(),
+                            );
                             ui.label(format!("{}", expires));
                             ui.end_row();
                         }
@@ -232,12 +261,16 @@ impl SwapDetail {
                                 ),
                             )
                             .clicked()
-                        && let Some(app) = app {
+                            && let Some(app) = app
+                        {
                             self.cancel_swap(app, &swap, list);
                         }
                     }
 
-                    if matches!(swap.state, SwapState::Pending | SwapState::Cancelled) {
+                    if matches!(
+                        swap.state,
+                        SwapState::Pending | SwapState::Cancelled
+                    ) {
                         if ui
                             .add_enabled(
                                 can_manage,
@@ -247,18 +280,25 @@ impl SwapDetail {
                                 ),
                             )
                             .clicked()
-                        && let Some(app) = app {
+                            && let Some(app) = app
+                        {
                             self.delete_swap(app, &swap, list);
                         }
                     }
 
-                    if !can_manage && app.is_some()
-                        && matches!(swap.state, SwapState::Pending | SwapState::Cancelled)
+                    if !can_manage
+                        && app.is_some()
+                        && matches!(
+                            swap.state,
+                            SwapState::Pending | SwapState::Cancelled
+                        )
                     {
                         ui.label(
-                            egui::RichText::new("(only swap creator can manage)")
-                                .small()
-                                .color(egui::Color32::GRAY),
+                            egui::RichText::new(
+                                "(only swap creator can manage)",
+                            )
+                            .small()
+                            .color(egui::Color32::GRAY),
                         );
                     }
                 });
@@ -395,7 +435,8 @@ impl SwapDetail {
                     if ui
                         .add_enabled(app.is_some(), Button::new("Claim"))
                         .clicked()
-                    && let Some(app) = app {
+                        && let Some(app) = app
+                    {
                         self.claim_swap(app, &swap.id, None, list);
                     }
                 } else {
@@ -407,7 +448,9 @@ impl SwapDetail {
                     }
                     ui.horizontal(|ui| {
                         ui.label("Claimer Address:");
-                        ui.text_edit_singleline(&mut self.claimer_address_input);
+                        ui.text_edit_singleline(
+                            &mut self.claimer_address_input,
+                        );
                         if ui
                             .add_enabled(
                                 app.is_some()
@@ -415,17 +458,24 @@ impl SwapDetail {
                                 Button::new("Claim"),
                             )
                             .clicked()
-                        && let Some(app) = app {
+                            && let Some(app) = app
+                        {
                             let claimer_addr: Address =
                                 match self.claimer_address_input.parse() {
                                     Ok(addr) => addr,
                                     Err(err) => {
-                                        self.claim_error =
-                                            Some(format!("Invalid address: {err}"));
+                                        self.claim_error = Some(format!(
+                                            "Invalid address: {err}"
+                                        ));
                                         return;
                                     }
                                 };
-                            self.claim_swap(app, &swap.id, Some(claimer_addr), list);
+                            self.claim_swap(
+                                app,
+                                &swap.id,
+                                Some(claimer_addr),
+                                list,
+                            );
                         }
                     });
                 }
@@ -433,7 +483,8 @@ impl SwapDetail {
                 if ui
                     .add_enabled(app.is_some(), Button::new("Claim Swap"))
                     .clicked()
-                && let Some(app) = app {
+                    && let Some(app) = app
+                {
                     self.claim_swap(app, &swap.id, None, list);
                 }
             }
@@ -451,7 +502,10 @@ impl SwapDetail {
         ui.group(|ui| {
             ui.heading("Waiting for Confirmations");
 
-            ui.label(format!("Current confirmations: {}/{}", current, required));
+            ui.label(format!(
+                "Current confirmations: {}/{}",
+                current, required
+            ));
 
             let progress = current as f32 / required as f32;
             ui.add(egui::ProgressBar::new(progress).show_percentage());
@@ -527,8 +581,7 @@ impl SwapDetail {
                 return;
             }
             Err(err) => {
-                self.claim_error =
-                    Some(format!("Failed to get swap: {err:#}"));
+                self.claim_error = Some(format!("Failed to get swap: {err:#}"));
                 return;
             }
         };
@@ -556,8 +609,7 @@ impl SwapDetail {
         }
 
         if locked_outputs.is_empty() {
-            self.claim_error =
-                Some("No locked outputs found for swap".into());
+            self.claim_error = Some("No locked outputs found for swap".into());
             return;
         }
 
@@ -618,12 +670,7 @@ impl SwapDetail {
         list.refresh_swaps(app);
     }
 
-    fn cancel_swap(
-        &mut self,
-        app: &App,
-        swap: &Swap,
-        list: &mut SwapList,
-    ) {
+    fn cancel_swap(&mut self, app: &App, swap: &Swap, list: &mut SwapList) {
         let swap_id = swap.id;
 
         if swap.created_at_height == 0 {
@@ -656,8 +703,7 @@ impl SwapDetail {
                     }
                 }
             }
-            self.claim_error =
-                Some("Pending swap not found in mempool".into());
+            self.claim_error = Some("Pending swap not found in mempool".into());
         } else {
             let creator = swap.l2_creator_address.as_ref();
             let mut rwtxn = match app.node.env().write_txn() {
@@ -672,14 +718,12 @@ impl SwapDetail {
             if let Err(err) =
                 app.node.state().cancel_swap(&mut rwtxn, &swap_id, creator)
             {
-                self.claim_error =
-                    Some(format!("Failed to cancel: {err:#}"));
+                self.claim_error = Some(format!("Failed to cancel: {err:#}"));
                 return;
             }
 
             if let Err(err) = rwtxn.commit() {
-                self.claim_error =
-                    Some(format!("Failed to commit: {err:#}"));
+                self.claim_error = Some(format!("Failed to commit: {err:#}"));
                 return;
             }
 
@@ -688,12 +732,7 @@ impl SwapDetail {
         }
     }
 
-    fn delete_swap(
-        &mut self,
-        app: &App,
-        swap: &Swap,
-        list: &mut SwapList,
-    ) {
+    fn delete_swap(&mut self, app: &App, swap: &Swap, list: &mut SwapList) {
         let swap_id = swap.id;
 
         if swap.created_at_height == 0 {
@@ -726,8 +765,7 @@ impl SwapDetail {
                     }
                 }
             }
-            self.claim_error =
-                Some("Pending swap not found in mempool".into());
+            self.claim_error = Some("Pending swap not found in mempool".into());
         } else {
             let creator = swap.l2_creator_address.as_ref();
             let mut rwtxn = match app.node.env().write_txn() {
@@ -742,14 +780,12 @@ impl SwapDetail {
             if let Err(err) =
                 app.node.state().delete_swap(&mut rwtxn, &swap_id, creator)
             {
-                self.claim_error =
-                    Some(format!("Failed to delete: {err:#}"));
+                self.claim_error = Some(format!("Failed to delete: {err:#}"));
                 return;
             }
 
             if let Err(err) = rwtxn.commit() {
-                self.claim_error =
-                    Some(format!("Failed to commit: {err:#}"));
+                self.claim_error = Some(format!("Failed to commit: {err:#}"));
                 return;
             }
 
@@ -823,30 +859,25 @@ impl SwapDetail {
         let rotxn = match app.node.env().read_txn() {
             Ok(txn) => txn,
             Err(err) => {
-                self.claim_error =
-                    Some(format!("Failed to read: {err:#}"));
+                self.claim_error = Some(format!("Failed to read: {err:#}"));
                 return;
             }
         };
 
-        let swap_exists = matches!(
-            app.node.state().get_swap(&rotxn, &swap.id),
-            Ok(Some(_))
-        );
+        let swap_exists =
+            matches!(app.node.state().get_swap(&rotxn, &swap.id), Ok(Some(_)));
         drop(rotxn);
 
         if !swap_exists {
-            self.claim_error =
-                Some("Swap not found in database".into());
+            self.claim_error = Some("Swap not found in database".into());
             return;
         }
 
         let l1_txid = match SwapTxId::from_hex(&self.l1_txid_input) {
             Ok(txid) => txid,
             Err(err) => {
-                self.claim_error = Some(format!(
-                    "Invalid L1 txid (64 hex chars): {err}"
-                ));
+                self.claim_error =
+                    Some(format!("Invalid L1 txid (64 hex chars): {err}"));
                 return;
             }
         };
@@ -854,58 +885,58 @@ impl SwapDetail {
         let l1_txid_hex = l1_txid.to_hex();
 
         // Fetch and validate from RPC
-        let confirmations =
-            if let Some(rpc_config) = list.load_rpc_config(swap.parent_chain) {
-                let client = ParentChainRpcClient::new(rpc_config);
-                match client.get_transaction(&l1_txid_hex) {
-                    Ok(tx_info) => {
-                        let conf = tx_info.confirmations;
+        let confirmations = if let Some(rpc_config) =
+            list.load_rpc_config(swap.parent_chain)
+        {
+            let client = ParentChainRpcClient::new(rpc_config);
+            match client.get_transaction(&l1_txid_hex) {
+                Ok(tx_info) => {
+                    let conf = tx_info.confirmations;
 
-                        // Validate outputs if expected recipient/amount known
-                        if let (Some(expected_recipient), Some(expected_amount)) =
-                            (&swap.l1_recipient_address, swap.l1_amount)
-                        {
-                            let expected_sats = expected_amount.to_sat();
-                            let found = tx_info.vout.iter().any(|vout| {
-                                let sats = (vout.value * 100_000_000.0) as u64;
-                                let addr_match = vout
+                    // Validate outputs if expected recipient/amount known
+                    if let (Some(expected_recipient), Some(expected_amount)) =
+                        (&swap.l1_recipient_address, swap.l1_amount)
+                    {
+                        let expected_sats = expected_amount.to_sat();
+                        let found = tx_info.vout.iter().any(|vout| {
+                            let sats = (vout.value * 100_000_000.0) as u64;
+                            let addr_match = vout
+                                .script_pub_key
+                                .address
+                                .as_ref()
+                                .map(|a| a == expected_recipient)
+                                .unwrap_or(false)
+                                || vout
                                     .script_pub_key
-                                    .address
+                                    .addresses
                                     .as_ref()
-                                    .map(|a| a == expected_recipient)
-                                    .unwrap_or(false)
-                                    || vout
-                                        .script_pub_key
-                                        .addresses
-                                        .as_ref()
-                                        .map(|addrs| {
-                                            addrs.contains(expected_recipient)
-                                        })
-                                        .unwrap_or(false);
-                                addr_match && sats == expected_sats
-                            });
+                                    .map(|addrs| {
+                                        addrs.contains(expected_recipient)
+                                    })
+                                    .unwrap_or(false);
+                            addr_match && sats == expected_sats
+                        });
 
-                            if !found {
-                                self.claim_error = Some(
-                                    "L1 tx doesn't match expected recipient/amount"
-                                        .into(),
-                                );
-                                return;
-                            }
+                        if !found {
+                            self.claim_error = Some(
+                                "L1 tx doesn't match expected recipient/amount"
+                                    .into(),
+                            );
+                            return;
                         }
+                    }
 
-                        conf
-                    }
-                    Err(err) => {
-                        self.claim_error = Some(format!(
-                            "Failed to fetch from RPC: {err:#}"
-                        ));
-                        return;
-                    }
+                    conf
                 }
-            } else {
-                0
-            };
+                Err(err) => {
+                    self.claim_error =
+                        Some(format!("Failed to fetch from RPC: {err:#}"));
+                    return;
+                }
+            }
+        } else {
+            0
+        };
 
         let l1_claimer_address = None;
 
@@ -964,14 +995,12 @@ impl SwapDetail {
             block_hash,
             block_height,
         ) {
-            self.claim_error =
-                Some(format!("Failed to update swap: {err:#}"));
+            self.claim_error = Some(format!("Failed to update swap: {err:#}"));
             return;
         }
 
         if let Err(err) = rwtxn.commit() {
-            self.claim_error =
-                Some(format!("Failed to commit: {err:#}"));
+            self.claim_error = Some(format!("Failed to commit: {err:#}"));
             return;
         }
 
@@ -987,12 +1016,22 @@ impl SwapDetail {
 
 fn state_display(state: &SwapState) -> (String, egui::Color32) {
     match state {
-        SwapState::Pending => ("Pending".into(), egui::Color32::from_rgb(130, 170, 255)),
-        SwapState::WaitingConfirmations(cur, req) => {
-            (format!("Waiting {}/{}", cur, req), egui::Color32::from_rgb(255, 180, 100))
+        SwapState::Pending => {
+            ("Pending".into(), egui::Color32::from_rgb(130, 170, 255))
         }
-        SwapState::ReadyToClaim => ("Ready to Claim".into(), egui::Color32::from_rgb(100, 220, 100)),
-        SwapState::Completed => ("Completed".into(), egui::Color32::from_rgb(140, 200, 140)),
-        SwapState::Cancelled => ("Cancelled".into(), egui::Color32::from_rgb(150, 150, 150)),
+        SwapState::WaitingConfirmations(cur, req) => (
+            format!("Waiting {}/{}", cur, req),
+            egui::Color32::from_rgb(255, 180, 100),
+        ),
+        SwapState::ReadyToClaim => (
+            "Ready to Claim".into(),
+            egui::Color32::from_rgb(100, 220, 100),
+        ),
+        SwapState::Completed => {
+            ("Completed".into(), egui::Color32::from_rgb(140, 200, 140))
+        }
+        SwapState::Cancelled => {
+            ("Cancelled".into(), egui::Color32::from_rgb(150, 150, 150))
+        }
     }
 }

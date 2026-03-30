@@ -151,8 +151,7 @@ pub fn prevalidate(
     // Skip the address-matching check for those specific inputs — swap
     // validation already ensures legitimacy.
     let mut auth_offset = 0usize;
-    let mut swap_claim_pending =
-        std::collections::HashSet::<usize>::new();
+    let mut swap_claim_pending = std::collections::HashSet::<usize>::new();
     for filled_tx in &filled_transactions {
         if matches!(filled_tx.transaction.data, TxData::SwapClaim { .. }) {
             for (i, utxo) in filled_tx.spent_utxos.iter().enumerate() {
@@ -574,8 +573,7 @@ pub fn validate(
     }
     // Same SwapClaim + SwapPending skip as in prevalidate.
     let mut auth_offset = 0usize;
-    let mut swap_claim_pending =
-        std::collections::HashSet::<usize>::new();
+    let mut swap_claim_pending = std::collections::HashSet::<usize>::new();
     for filled_tx in &filled_transactions {
         if matches!(filled_tx.transaction.data, TxData::SwapClaim { .. }) {
             for (i, utxo) in filled_tx.spent_utxos.iter().enumerate() {

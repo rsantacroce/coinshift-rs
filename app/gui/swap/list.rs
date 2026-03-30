@@ -4,9 +4,7 @@ use std::{
 };
 
 use coinshift::parent_chain_rpc::{ParentChainRpcClient, RpcConfig};
-use coinshift::types::{
-    ParentChainType, Swap, SwapId, SwapState, SwapTxId,
-};
+use coinshift::types::{ParentChainType, Swap, SwapId, SwapState, SwapTxId};
 use eframe::egui::{self, Button, ScrollArea};
 
 use crate::app::App;
@@ -209,12 +207,36 @@ impl SwapList {
                     SwapStatusFilter::Cancelled => "Cancelled",
                 })
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.status_filter, SwapStatusFilter::All, "All");
-                    ui.selectable_value(&mut self.status_filter, SwapStatusFilter::Pending, "Pending");
-                    ui.selectable_value(&mut self.status_filter, SwapStatusFilter::WaitingConfirmations, "Waiting Confirmations");
-                    ui.selectable_value(&mut self.status_filter, SwapStatusFilter::ReadyToClaim, "Ready To Claim");
-                    ui.selectable_value(&mut self.status_filter, SwapStatusFilter::Completed, "Completed");
-                    ui.selectable_value(&mut self.status_filter, SwapStatusFilter::Cancelled, "Cancelled");
+                    ui.selectable_value(
+                        &mut self.status_filter,
+                        SwapStatusFilter::All,
+                        "All",
+                    );
+                    ui.selectable_value(
+                        &mut self.status_filter,
+                        SwapStatusFilter::Pending,
+                        "Pending",
+                    );
+                    ui.selectable_value(
+                        &mut self.status_filter,
+                        SwapStatusFilter::WaitingConfirmations,
+                        "Waiting Confirmations",
+                    );
+                    ui.selectable_value(
+                        &mut self.status_filter,
+                        SwapStatusFilter::ReadyToClaim,
+                        "Ready To Claim",
+                    );
+                    ui.selectable_value(
+                        &mut self.status_filter,
+                        SwapStatusFilter::Completed,
+                        "Completed",
+                    );
+                    ui.selectable_value(
+                        &mut self.status_filter,
+                        SwapStatusFilter::Cancelled,
+                        "Cancelled",
+                    );
                 });
 
             ui.separator();
@@ -228,9 +250,21 @@ impl SwapList {
                     OwnershipFilter::Bookmarked => "Bookmarked",
                 })
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.ownership_filter, OwnershipFilter::All, "All Swaps");
-                    ui.selectable_value(&mut self.ownership_filter, OwnershipFilter::YourSwaps, "Your Swaps");
-                    ui.selectable_value(&mut self.ownership_filter, OwnershipFilter::Bookmarked, "Bookmarked");
+                    ui.selectable_value(
+                        &mut self.ownership_filter,
+                        OwnershipFilter::All,
+                        "All Swaps",
+                    );
+                    ui.selectable_value(
+                        &mut self.ownership_filter,
+                        OwnershipFilter::YourSwaps,
+                        "Your Swaps",
+                    );
+                    ui.selectable_value(
+                        &mut self.ownership_filter,
+                        OwnershipFilter::Bookmarked,
+                        "Bookmarked",
+                    );
                 });
         });
 
@@ -255,7 +289,9 @@ impl SwapList {
 
         if let Some(err_msg) = &self.search_error {
             ui.label(
-                egui::RichText::new(err_msg).color(egui::Color32::RED).small(),
+                egui::RichText::new(err_msg)
+                    .color(egui::Color32::RED)
+                    .small(),
             );
         }
 
@@ -281,11 +317,22 @@ impl SwapList {
                 // status filter
                 match status_filter {
                     SwapStatusFilter::All => true,
-                    SwapStatusFilter::Pending => matches!(swap.state, SwapState::Pending),
-                    SwapStatusFilter::WaitingConfirmations => matches!(swap.state, SwapState::WaitingConfirmations(..)),
-                    SwapStatusFilter::ReadyToClaim => matches!(swap.state, SwapState::ReadyToClaim),
-                    SwapStatusFilter::Completed => matches!(swap.state, SwapState::Completed),
-                    SwapStatusFilter::Cancelled => matches!(swap.state, SwapState::Cancelled),
+                    SwapStatusFilter::Pending => {
+                        matches!(swap.state, SwapState::Pending)
+                    }
+                    SwapStatusFilter::WaitingConfirmations => matches!(
+                        swap.state,
+                        SwapState::WaitingConfirmations(..)
+                    ),
+                    SwapStatusFilter::ReadyToClaim => {
+                        matches!(swap.state, SwapState::ReadyToClaim)
+                    }
+                    SwapStatusFilter::Completed => {
+                        matches!(swap.state, SwapState::Completed)
+                    }
+                    SwapStatusFilter::Cancelled => {
+                        matches!(swap.state, SwapState::Cancelled)
+                    }
                 }
             })
             .filter(|swap| {
@@ -293,7 +340,9 @@ impl SwapList {
                 match ownership_filter {
                     OwnershipFilter::All => true,
                     OwnershipFilter::YourSwaps => Self::is_own_swap(app, swap),
-                    OwnershipFilter::Bookmarked => bookmarked.contains(&swap.id),
+                    OwnershipFilter::Bookmarked => {
+                        bookmarked.contains(&swap.id)
+                    }
                 }
             })
             .filter(|swap| {
@@ -324,7 +373,8 @@ impl SwapList {
         let header_color = egui::Color32::from_rgb(180, 180, 180);
         let stripe_a = egui::Color32::TRANSPARENT;
         let stripe_b = egui::Color32::from_rgba_premultiplied(255, 255, 255, 6);
-        let selected_bg = egui::Color32::from_rgba_premultiplied(70, 90, 140, 60);
+        let selected_bg =
+            egui::Color32::from_rgba_premultiplied(70, 90, 140, 60);
 
         ScrollArea::vertical().show(ui, |ui| {
             egui::Grid::new("swap_list_grid")
@@ -592,8 +642,9 @@ impl SwapList {
         let work: Vec<_> = swaps_to_check
             .iter()
             .filter_map(|swap| {
-                self.load_rpc_config(swap.parent_chain)
-                    .map(|rpc_config| (swap.id, rpc_config, swap.l1_txid.to_hex()))
+                self.load_rpc_config(swap.parent_chain).map(|rpc_config| {
+                    (swap.id, rpc_config, swap.l1_txid.to_hex())
+                })
             })
             .collect();
 
@@ -689,13 +740,21 @@ impl SwapList {
 
 fn state_display(state: &SwapState) -> (String, egui::Color32) {
     match state {
-        SwapState::Pending => ("Pending".into(), egui::Color32::from_rgb(130, 170, 255)),
+        SwapState::Pending => {
+            ("Pending".into(), egui::Color32::from_rgb(130, 170, 255))
+        }
         SwapState::WaitingConfirmations(cur, req) => (
             format!("Waiting {}/{}", cur, req),
             egui::Color32::from_rgb(255, 180, 100),
         ),
-        SwapState::ReadyToClaim => ("Ready".into(), egui::Color32::from_rgb(100, 220, 100)),
-        SwapState::Completed => ("Completed".into(), egui::Color32::from_rgb(140, 200, 140)),
-        SwapState::Cancelled => ("Cancelled".into(), egui::Color32::from_rgb(150, 150, 150)),
+        SwapState::ReadyToClaim => {
+            ("Ready".into(), egui::Color32::from_rgb(100, 220, 100))
+        }
+        SwapState::Completed => {
+            ("Completed".into(), egui::Color32::from_rgb(140, 200, 140))
+        }
+        SwapState::Cancelled => {
+            ("Cancelled".into(), egui::Color32::from_rgb(150, 150, 150))
+        }
     }
 }

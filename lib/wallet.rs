@@ -368,8 +368,7 @@ impl Wallet {
         // will claim it, so they can sign the SwapClaim transaction.
         // For open swaps (l2_recipient is None), we use the creator's address
         // since the recipient is unknown at creation time.
-        let swap_output_address =
-            l2_recipient.unwrap_or(l2_sender_address);
+        let swap_output_address = l2_recipient.unwrap_or(l2_sender_address);
         let outputs = vec![
             Output {
                 address: swap_output_address,
@@ -742,7 +741,8 @@ impl Wallet {
         &self,
         transaction: Transaction,
     ) -> Result<AuthorizedTransaction, Error> {
-        let is_swap_claim = matches!(transaction.data, TxData::SwapClaim { .. });
+        let is_swap_claim =
+            matches!(transaction.data, TxData::SwapClaim { .. });
         let mut authorizations = Vec::with_capacity(transaction.inputs.len());
         for (outpoint, _) in &transaction.inputs {
             let key = OutPointKey::from(outpoint);
@@ -766,23 +766,17 @@ impl Wallet {
                         // For SwapClaim transactions, SwapPending inputs are
                         // owned by the swap creator, not the claimer. Sign
                         // with the claimer's own key (index 0) instead.
-                        if is_swap_claim
-                            && spent_utxo.content.is_swap_pending()
+                        if is_swap_claim && spent_utxo.content.is_swap_pending()
                         {
-                            let txn = self
-                                .env
-                                .read_txn()
-                                .map_err(EnvError::from)?;
-                            let signing_key =
-                                self.get_signing_key(&txn, 0)?;
-                            let signature =
-                                crate::authorization::sign(
-                                    &signing_key,
-                                    &transaction,
-                                )?;
+                            let txn =
+                                self.env.read_txn().map_err(EnvError::from)?;
+                            let signing_key = self.get_signing_key(&txn, 0)?;
+                            let signature = crate::authorization::sign(
+                                &signing_key,
+                                &transaction,
+                            )?;
                             authorizations.push(Authorization {
-                                verifying_key: signing_key
-                                    .verifying_key(),
+                                verifying_key: signing_key.verifying_key(),
                                 signature,
                             });
                             break;
