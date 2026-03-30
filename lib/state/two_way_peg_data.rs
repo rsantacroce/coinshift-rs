@@ -15,7 +15,7 @@ use crate::{
         AccumulatorDiff, AggregatedWithdrawal, AmountOverflowError, BlockHash,
         GetValue, InPoint, M6id, OutPoint, OutPointKey, Output, OutputContent,
         ParentChainType, PointedOutput, PointedOutputRef, SpentOutput, Swap,
-        SwapState, SwapTxId, WithdrawalBundle, WithdrawalBundleEvent,
+        SwapId, SwapState, SwapTxId, WithdrawalBundle, WithdrawalBundleEvent,
         WithdrawalBundleStatus, hash,
         proto::mainchain::{BlockEvent, TwoWayPegData},
     },
@@ -577,17 +577,32 @@ fn query_and_update_swap(
         return Ok(false);
     }
 
-    // Only accept transactions that are confirmed and included in a block
+    // Only accept transactions that are confirmed and included in a block,
+    // and not older than the chain's max L1 tx age
+    let max_age = swap.parent_chain.max_l1_tx_age_blocks();
     let matches: Vec<_> = matches
         .into_iter()
         .filter(|(_, tx_info)| {
-            tx_info.confirmations > 0 && tx_info.blockheight.is_some()
+            if tx_info.confirmations == 0 || tx_info.blockheight.is_none() {
+                return false;
+            }
+            if tx_info.confirmations > max_age {
+                tracing::info!(
+                    swap_id = %swap.id,
+                    l1_txid = %tx_info.txid,
+                    confirmations = %tx_info.confirmations,
+                    max_age = %max_age,
+                    "Rejecting L1 tx: too old (confirmations exceed max_l1_tx_age_blocks)"
+                );
+                return false;
+            }
+            true
         })
         .collect();
     if matches.is_empty() {
         tracing::debug!(
             swap_id = %swap.id,
-            "No confirmed or block-included L1 match; rejecting unconfirmed or mempool-only tx"
+            "No confirmed or block-included L1 match; rejecting unconfirmed, mempool-only, or too-old tx"
         );
         return Ok(false);
     }
@@ -732,11 +747,28 @@ fn process_coinshift_transactions(
         if let Some(expires_at) = swap.expires_at_height
             && block_height >= expires_at
         {
+            // Unlock all outputs locked to this swap so the creator can spend them again
+            let mut unlocked_count = 0u32;
+            let locked_outputs: Vec<(OutPointKey, SwapId)> = state
+                .locked_swap_outputs
+                .iter(rwtxn)
+                .map_err(DbError::from)?
+                .map(|(key, sid)| Ok((key, sid)))
+                .collect()?;
+            for (outpoint_key, locked_swap_id) in locked_outputs {
+                if locked_swap_id == swap.id {
+                    let outpoint: OutPoint = outpoint_key.into();
+                    state.unlock_output_from_swap(rwtxn, &outpoint)?;
+                    unlocked_count += 1;
+                }
+            }
+
             tracing::info!(
                 swap_id = %swap.id,
                 block_height = %block_height,
                 expires_at = %expires_at,
-                "Swap expired, marking as cancelled"
+                unlocked_outputs = %unlocked_count,
+                "Swap expired, unlocking outputs and marking as cancelled"
             );
             swap.state = SwapState::Cancelled;
             state.save_swap(rwtxn, &swap)?;

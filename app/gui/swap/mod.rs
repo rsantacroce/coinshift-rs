@@ -4,9 +4,11 @@ use strum::{EnumIter, IntoEnumIterator};
 use crate::app::App;
 
 mod create;
+mod detail;
 mod list;
 
 use create::CreateSwap;
+use detail::SwapDetail;
 use list::SwapList;
 
 #[derive(Default, EnumIter, Eq, PartialEq, strum::Display)]
@@ -14,13 +16,16 @@ enum Tab {
     #[default]
     #[strum(to_string = "Create Swap")]
     Create,
-    #[strum(to_string = "My Swaps")]
+    #[strum(to_string = "Swap List")]
     List,
+    #[strum(to_string = "Swap Detail")]
+    Detail,
 }
 
 pub struct Swap {
     create: CreateSwap,
     list: SwapList,
+    detail: SwapDetail,
     tab: Tab,
 }
 
@@ -29,6 +34,7 @@ impl Swap {
         Self {
             create: CreateSwap::default(),
             list: SwapList::new(app),
+            detail: SwapDetail::default(),
             tab: Tab::default(),
         }
     }
@@ -47,7 +53,13 @@ impl Swap {
                 self.create.show(app, ui);
             }
             Tab::List => {
-                self.list.show(app, ui);
+                if let Some(swap) = self.list.show(app, ui) {
+                    self.detail.set_swap(swap);
+                    self.tab = Tab::Detail;
+                }
+            }
+            Tab::Detail => {
+                self.detail.show(app, ui, &mut self.list);
             }
         });
     }

@@ -423,11 +423,22 @@ impl State {
             }
         }
 
+        let is_swap_claim =
+            matches!(transaction.transaction.data, TxData::SwapClaim { .. });
         for (authorization, spent_utxo) in transaction
             .authorizations
             .iter()
             .zip(filled_transaction.spent_utxos.iter())
         {
+            // For SwapClaim transactions, SwapPending inputs are owned by
+            // the swap creator but spent by the claimer.  The swap
+            // validation (validate_swap_claim) already ensures the claim
+            // is legitimate (ReadyToClaim, correct recipient, locked
+            // output), so we skip the address-matching check for those
+            // inputs.
+            if is_swap_claim && spent_utxo.content.is_swap_pending() {
+                continue;
+            }
             if authorization.get_address() != spent_utxo.address {
                 return Err(Error::WrongPubKeyForAddress);
             }
@@ -1566,6 +1577,16 @@ impl State {
             return Err(Error::InvalidTransaction(format!(
                 "Swap {}: L1 tx confirmations must be > 0 (got 0); only confirmed transactions are accepted",
                 swap_id
+            )));
+        }
+
+        // Reject L1 transactions that are too old — prevents using ancient, unrelated
+        // transactions that happen to match the swap's address and amount
+        let max_age = swap.parent_chain.max_l1_tx_age_blocks();
+        if confirmations > max_age {
+            return Err(Error::InvalidTransaction(format!(
+                "Swap {}: L1 tx is too old ({} confirmations exceeds max age of {} blocks for {:?})",
+                swap_id, confirmations, max_age, swap.parent_chain
             )));
         }
 

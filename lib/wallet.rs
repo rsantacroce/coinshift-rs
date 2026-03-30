@@ -364,12 +364,14 @@ impl Wallet {
         let proof = accumulator.prove(&input_utxo_hashes)?;
 
         // 4. Create outputs with SwapPending content
-        // Swap output is owned by the swap creator (similar to withdrawal outputs)
-        // The l2_recipient is just metadata about who can claim it, but the output
-        // itself is owned by the creator
+        // For pre-specified swaps, the output is owned by the recipient who
+        // will claim it, so they can sign the SwapClaim transaction.
+        // For open swaps (l2_recipient is None), we use the creator's address
+        // since the recipient is unknown at creation time.
+        let swap_output_address = l2_recipient.unwrap_or(l2_sender_address);
         let outputs = vec![
             Output {
-                address: l2_sender_address,
+                address: swap_output_address,
                 content: OutputContent::SwapPending {
                     value: l2_amount,
                     swap_id: swap_id.0,
@@ -739,6 +741,8 @@ impl Wallet {
         &self,
         transaction: Transaction,
     ) -> Result<AuthorizedTransaction, Error> {
+        let is_swap_claim =
+            matches!(transaction.data, TxData::SwapClaim { .. });
         let mut authorizations = Vec::with_capacity(transaction.inputs.len());
         for (outpoint, _) in &transaction.inputs {
             let key = OutPointKey::from(outpoint);
@@ -759,6 +763,24 @@ impl Wallet {
                 let index = match index {
                     Some(idx) => BigEndian::read_u32(&idx),
                     None => {
+                        // For SwapClaim transactions, SwapPending inputs are
+                        // owned by the swap creator, not the claimer. Sign
+                        // with the claimer's own key (index 0) instead.
+                        if is_swap_claim && spent_utxo.content.is_swap_pending()
+                        {
+                            let txn =
+                                self.env.read_txn().map_err(EnvError::from)?;
+                            let signing_key = self.get_signing_key(&txn, 0)?;
+                            let signature = crate::authorization::sign(
+                                &signing_key,
+                                &transaction,
+                            )?;
+                            authorizations.push(Authorization {
+                                verifying_key: signing_key.verifying_key(),
+                                signature,
+                            });
+                            break;
+                        }
                         self.ensure_address_indexed(&spent_utxo.address)?;
                         continue;
                     }
@@ -909,8 +931,7 @@ impl Wallet {
             if utxo_addresses.contains(&address) {
                 // Check if already indexed
                 let already_indexed = {
-                    let txn =
-                        self.env.read_txn().map_err(EnvError::from)?;
+                    let txn = self.env.read_txn().map_err(EnvError::from)?;
                     self.address_to_index
                         .try_get(&txn, &address)
                         .map_err(DbError::from)?
