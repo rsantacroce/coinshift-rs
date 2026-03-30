@@ -21,6 +21,31 @@ pub fn show_btc_amount(amount: bitcoin::Amount) -> String {
     )
 }
 
+/// Show an L2 amount as a plain number (no prefix).
+pub fn show_l2_amount(amount: bitcoin::Amount) -> String {
+    amount.to_string_in(bitcoin::Denomination::Bitcoin)
+}
+
+/// Show an L1 amount with the parent-chain abbreviation prefix.
+pub fn show_l1_amount(
+    amount: bitcoin::Amount,
+    chain: coinshift::types::ParentChainType,
+) -> String {
+    use coinshift::types::ParentChainType;
+    let prefix = match chain {
+        ParentChainType::BTC => "BTC",
+        ParentChainType::BCH => "BCH",
+        ParentChainType::LTC => "LTC",
+        ParentChainType::Signet => "sBTC",
+        ParentChainType::Regtest => "rBTC",
+    };
+    format!(
+        "{} {}",
+        prefix,
+        amount.to_string_in(bitcoin::Denomination::Bitcoin)
+    )
+}
+
 // extension for InnerResponse<Response> and InnerResponse<Option<Response>>
 pub trait InnerResponseExt {
     #[allow(dead_code)]

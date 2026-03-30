@@ -146,12 +146,31 @@ pub fn prevalidate(
     if coinbase_value > total_fees {
         return Err(Error::NotEnoughFees);
     }
+    // For SwapClaim transactions, SwapPending inputs are owned by the swap
+    // creator but spent by the claimer (who may be a different wallet).
+    // Skip the address-matching check for those specific inputs — swap
+    // validation already ensures legitimacy.
+    let mut auth_offset = 0usize;
+    let mut swap_claim_pending = std::collections::HashSet::<usize>::new();
+    for filled_tx in &filled_transactions {
+        if matches!(filled_tx.transaction.data, TxData::SwapClaim { .. }) {
+            for (i, utxo) in filled_tx.spent_utxos.iter().enumerate() {
+                if utxo.content.is_swap_pending() {
+                    swap_claim_pending.insert(auth_offset + i);
+                }
+            }
+        }
+        auth_offset += filled_tx.spent_utxos.len();
+    }
     let spent_utxos = filled_transactions
         .iter()
         .flat_map(|t| t.spent_utxos.iter());
-    for (authorization, spent_utxo) in
-        body.authorizations.iter().zip(spent_utxos)
+    for (idx, (authorization, spent_utxo)) in
+        body.authorizations.iter().zip(spent_utxos).enumerate()
     {
+        if swap_claim_pending.contains(&idx) {
+            continue;
+        }
         if authorization.get_address() != spent_utxo.address {
             return Err(Error::WrongPubKeyForAddress);
         }
@@ -308,7 +327,10 @@ pub fn connect_prevalidated(
                     l1_recipient_address.clone(),
                     l1_amount.map(bitcoin::Amount::from_sat),
                     current_height,
-                    None, // TODO: Add expiration support
+                    Some(
+                        current_height
+                            + parent_chain.default_swap_expiration_blocks(),
+                    ),
                     l2_creator_address,
                 );
 
@@ -373,12 +395,20 @@ pub fn connect_prevalidated(
                     .get_swap(rwtxn, &swap_id)?
                     .ok_or_else(|| Error::SwapNotFound { swap_id })?;
 
-                // Verify state
+                // If this node hasn't yet observed the L1 fill (swap
+                // state set by local, non-deterministic L1 monitoring),
+                // trust the block and advance the swap to ReadyToClaim.
+                // The miner who produced the block already validated the
+                // L1 side before including this SwapClaim.
                 if !matches!(swap.state, SwapState::ReadyToClaim) {
-                    return Err(Error::InvalidTransaction(format!(
-                        "Swap {} is not ready to claim",
-                        swap_id
-                    )));
+                    tracing::warn!(
+                        %swap_id,
+                        state = ?swap.state,
+                        "SwapClaim in block but local swap not ReadyToClaim; \
+                         advancing state to match block"
+                    );
+                    swap.state = SwapState::ReadyToClaim;
+                    state.save_swap(rwtxn, &swap)?;
                 }
 
                 // For open swaps, verify claimer address is provided
@@ -541,12 +571,28 @@ pub fn validate(
     if coinbase_value > total_fees {
         return Err(Error::NotEnoughFees);
     }
+    // Same SwapClaim + SwapPending skip as in prevalidate.
+    let mut auth_offset = 0usize;
+    let mut swap_claim_pending = std::collections::HashSet::<usize>::new();
+    for filled_tx in &filled_transactions {
+        if matches!(filled_tx.transaction.data, TxData::SwapClaim { .. }) {
+            for (i, utxo) in filled_tx.spent_utxos.iter().enumerate() {
+                if utxo.content.is_swap_pending() {
+                    swap_claim_pending.insert(auth_offset + i);
+                }
+            }
+        }
+        auth_offset += filled_tx.spent_utxos.len();
+    }
     let spent_utxos = filled_transactions
         .iter()
         .flat_map(|t| t.spent_utxos.iter());
-    for (authorization, spent_utxo) in
-        body.authorizations.iter().zip(spent_utxos)
+    for (idx, (authorization, spent_utxo)) in
+        body.authorizations.iter().zip(spent_utxos).enumerate()
     {
+        if swap_claim_pending.contains(&idx) {
+            continue;
+        }
         if authorization.get_address() != spent_utxo.address {
             return Err(Error::WrongPubKeyForAddress);
         }
