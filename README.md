@@ -1,10 +1,13 @@
 # Coinshift
 
-Coinshift is a BIP300-style sidechain node with a trustless **L2 ↔ L1 swap** system: you can exchange sidechain (L2) coins for parent-chain (L1) assets such as BTC, BCH, or LTC, and vice versa. The app includes a JSON-RPC server, CLI, and GUI.
+Coinshift is a [BIP300](https://en.bitcoin.it/wiki/BIP_0300)-style sidechain node with a trustless **L2 <-> L1 swap** system. Exchange sidechain (L2) coins for parent-chain (L1) assets such as BTC, BCH, or LTC, and vice versa. The app includes a JSON-RPC server, CLI, and GUI.
+
+- **Live node:** [coinshift.bip300.xyz](https://coinshift.bip300.xyz)
+- **Built by:** [Layer Two Labs](https://layertwolabs.com)
 
 ## Supported chains (swaps)
 
-Swaps support the following L1 parent chains (Bitcoin Core–compatible RPC):
+Swaps support the following L1 parent chains (Bitcoin Core-compatible RPC):
 
 | Chain            | Ticker | Default RPC port | Confirmations |
 |------------------|--------|------------------|---------------|
@@ -18,60 +21,50 @@ Configure RPC per chain via the GUI (**L1 Config**) or CLI (`set-l1-config`). Se
 
 ## Building
 
-Check out the repo with `git clone`, and then
-
 ```bash
-$ git submodule update --init
-$ cargo build
+git clone https://github.com/layertwolabs/coinshift-rs.git
+cd coinshift-rs
+git submodule update --init
+cargo build
 ```
 
 ## Running
 
 ```bash
-# Starts the RPC-API server
-$ cargo run --bin coinshift_app -- --headless
+# Start the RPC server (headless)
+cargo run --bin coinshift_app -- --headless
 
-# Runs the CLI, for interacting with the JSON-RPC server
-$ cargo run --bin coinshift_app_cli
+# Start the GUI (includes an embedded RPC server)
+cargo run --bin coinshift_app
 
-# Runs the user interface. Includes an embedded 
-# version of the JSON-RPC server. 
-$ cargo run --bin coinshift_app -- --headless
+# CLI for interacting with the JSON-RPC server
+cargo run --bin coinshift_app_cli
 ```
 
 ## Running multiple instances
 
-You can run two (or more) Coinshift instances on the same machine by giving each instance its own **data directory**, **RPC address**, and **P2P (net) address** so they don’t conflict.
+Run two or more Coinshift instances on the same machine by giving each its own **data directory**, **RPC address**, and **P2P (net) address**.
 
-1. **Data directory** (`--datadir` / `-d`) — Use a separate datadir per instance so wallets and chain data don’t clash (e.g. `--datadir /path/to/coinshift2` for the second instance).
-2. **RPC address** (`--rpc-addr` / `-r`) — Default is `127.0.0.1:6255`. Use a different port for the second instance (e.g. `127.0.0.1:6256`).
-3. **P2P address** (`--net-addr` / `-n`) — Default is `0.0.0.0:4255`. Use a different port for the second instance (e.g. `0.0.0.0:4256`).
-4. **Mainchain gRPC** (`--mainchain-grpc-url`) — If both instances use the same mainchain/enforcer, use the same URL. If they use different mainchain nodes, set a different URL per instance.
+| What       | Instance 1 (default)    | Instance 2                          |
+|------------|-------------------------|-------------------------------------|
+| Data dir   | default                 | `--datadir <path>`                  |
+| RPC        | `127.0.0.1:6255`        | `--rpc-addr 127.0.0.1:6256`        |
+| P2P        | `0.0.0.0:4255`          | `--net-addr 0.0.0.0:4256`          |
+| CLI target | `http://localhost:6255` | `--rpc-url http://localhost:6256`   |
 
-**Instance 1 (defaults):**
+**Example (second instance):**
+
 ```bash
-$ cargo run --bin coinshift_app -- --headless
-```
-
-**Instance 2 (separate datadir, RPC, and P2P):**
-```bash
-$ cargo run --bin coinshift_app -- --headless \
+cargo run --bin coinshift_app -- --headless \
   --datadir ~/coinshift-instance2 \
   --rpc-addr 127.0.0.1:6256 \
   --net-addr 0.0.0.0:4256
 ```
 
-To talk to the second instance with the CLI, use `--rpc-url`:
 ```bash
-$ cargo run --bin coinshift_app_cli -- --rpc-url http://localhost:6256 balance
+# Talk to the second instance with the CLI
+cargo run --bin coinshift_app_cli -- --rpc-url http://localhost:6256 balance
 ```
-
-| What        | Instance 1 (default) | Instance 2              |
-|------------|----------------------|-------------------------|
-| Data dir   | default              | `--datadir <path>`      |
-| RPC        | `127.0.0.1:6255`     | `--rpc-addr 127.0.0.1:6256` |
-| P2P        | `0.0.0.0:4255`       | `--net-addr 0.0.0.0:4256`   |
-| CLI target | `http://localhost:6255` | `--rpc-url http://localhost:6256` |
 
 ## CLI commands
 
@@ -80,7 +73,7 @@ The CLI talks to the Coinshift RPC server (default `http://localhost:6255`). Use
 ### Wallet / seed
 
 | Command | Description |
-|--------|-------------|
+|---------|-------------|
 | `backup-mnemonic` | Output mnemonic for backup (new phrase, or from file with `--from-file`) |
 | `balance` | Get balance in sats |
 | `generate-mnemonic` | Generate a new 12-word mnemonic |
@@ -94,7 +87,7 @@ The CLI talks to the Coinshift RPC server (default `http://localhost:6255`). Use
 ### Deposits / withdrawals / transfers
 
 | Command | Description |
-|--------|-------------|
+|---------|-------------|
 | `create-deposit` | Deposit to address (`--address`, `--value-sats`, `--fee-sats`) |
 | `format-deposit-address` | Format a deposit address |
 | `transfer` | Transfer to L2 address (`--dest`, `--value-sats`, `--fee-sats`) |
@@ -105,8 +98,8 @@ The CLI talks to the Coinshift RPC server (default `http://localhost:6255`). Use
 ### Swaps
 
 | Command | Description |
-|--------|-------------|
-| `create-swap` | Create L2→L1 swap (`--parent-chain`, `--l1-recipient-address`, amounts, `--fee-sats`, etc.) |
+|---------|-------------|
+| `create-swap` | Create L2->L1 swap (`--parent-chain`, `--l1-recipient-address`, amounts, etc.) |
 | `update-swap-l1-txid` | Set L1 txid and confirmations for a swap |
 | `claim-swap` | Claim swap after L1 confirmations |
 | `list-swaps` | List all swaps |
@@ -117,14 +110,14 @@ The CLI talks to the Coinshift RPC server (default `http://localhost:6255`). Use
 ### L1 config
 
 | Command | Description |
-|--------|-------------|
+|---------|-------------|
 | `get-l1-config` | Show L1 RPC config (optional `--chain`) |
 | `set-l1-config` | Set L1 RPC for a chain (`--parent-chain`, `--url`, `--user`, `--password`) |
 
 ### Chain / blocks / peers
 
 | Command | Description |
-|--------|-------------|
+|---------|-------------|
 | `get-blockcount` | Current block count |
 | `get-best-mainchain-block-hash` | Best mainchain block hash |
 | `get-best-sidechain-block-hash` | Best sidechain block hash |
@@ -137,7 +130,7 @@ The CLI talks to the Coinshift RPC server (default `http://localhost:6255`). Use
 ### Mempool / mining / node
 
 | Command | Description |
-|--------|-------------|
+|---------|-------------|
 | `list-utxos` | List all UTXOs |
 | `remove-from-mempool` | Remove tx from mempool (`--txid`) |
 | `mine` | Mine a sidechain block (optional `--fee-sats`) |
@@ -146,13 +139,13 @@ The CLI talks to the Coinshift RPC server (default `http://localhost:6255`). Use
 ### Other
 
 | Command | Description |
-|--------|-------------|
+|---------|-------------|
 | `openapi-schema` | Print OpenAPI schema |
 
 ## Documentation
 
 | Doc | Description |
-|-----|--------------|
+|-----|-------------|
 | [docs/SETUP_ORDER.md](docs/SETUP_ORDER.md) | Step-by-step regtest setup (mainchain, enforcer, wallets, mining) |
 | [docs/ADDING_PARENT_CHAINS.md](docs/ADDING_PARENT_CHAINS.md) | Supported L1 chains and how to add new ones |
 | [docs/COINSHIFT_HOW_IT_WORKS.md](docs/COINSHIFT_HOW_IT_WORKS.md) | Architecture and swap flow |
@@ -165,3 +158,7 @@ The CLI talks to the Coinshift RPC server (default `http://localhost:6255`). Use
 
 - **Regtest environment:** [scripts/regtest/](scripts/regtest/) — start mainchain, parentchain, enforcer, mine, fund wallets. See [scripts/README.md](scripts/README.md) and [docs/SETUP_ORDER.md](docs/SETUP_ORDER.md).
 - **Other:** `scripts/setup.sh`, `scripts/test_swap.sh`.
+
+## License
+
+All rights reserved unless otherwise noted. See [LICENSE.txt](LICENSE.txt).
