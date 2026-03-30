@@ -1580,6 +1580,16 @@ impl State {
             )));
         }
 
+        // Reject L1 transactions that are too old — prevents using ancient, unrelated
+        // transactions that happen to match the swap's address and amount
+        let max_age = swap.parent_chain.max_l1_tx_age_blocks();
+        if confirmations > max_age {
+            return Err(Error::InvalidTransaction(format!(
+                "Swap {}: L1 tx is too old ({} confirmations exceeds max age of {} blocks for {:?})",
+                swap_id, confirmations, max_age, swap.parent_chain
+            )));
+        }
+
         // L1 transaction uniqueness: do not allow an L1 tx already used by another swap
         if let Some(existing) =
             self.get_swap_by_l1_txid(rwtxn, &swap.parent_chain, &l1_txid)?

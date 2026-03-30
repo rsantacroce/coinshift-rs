@@ -577,17 +577,32 @@ fn query_and_update_swap(
         return Ok(false);
     }
 
-    // Only accept transactions that are confirmed and included in a block
+    // Only accept transactions that are confirmed and included in a block,
+    // and not older than the chain's max L1 tx age
+    let max_age = swap.parent_chain.max_l1_tx_age_blocks();
     let matches: Vec<_> = matches
         .into_iter()
         .filter(|(_, tx_info)| {
-            tx_info.confirmations > 0 && tx_info.blockheight.is_some()
+            if tx_info.confirmations == 0 || tx_info.blockheight.is_none() {
+                return false;
+            }
+            if tx_info.confirmations > max_age {
+                tracing::info!(
+                    swap_id = %swap.id,
+                    l1_txid = %tx_info.txid,
+                    confirmations = %tx_info.confirmations,
+                    max_age = %max_age,
+                    "Rejecting L1 tx: too old (confirmations exceed max_l1_tx_age_blocks)"
+                );
+                return false;
+            }
+            true
         })
         .collect();
     if matches.is_empty() {
         tracing::debug!(
             swap_id = %swap.id,
-            "No confirmed or block-included L1 match; rejecting unconfirmed or mempool-only tx"
+            "No confirmed or block-included L1 match; rejecting unconfirmed, mempool-only, or too-old tx"
         );
         return Ok(false);
     }
