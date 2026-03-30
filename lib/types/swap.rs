@@ -401,7 +401,7 @@ impl SwapTxId {
 
 #[cfg(test)]
 mod tests {
-    use super::SwapTxId;
+    use super::*;
 
     #[test]
     fn from_hex_requires_64_chars() {
@@ -437,6 +437,96 @@ mod tests {
         assert_eq!(from_canonical.to_hex_rpc(), rpc_order);
         assert_eq!(from_rpc.to_hex(), canonical);
         assert_eq!(from_rpc.to_hex_rpc(), rpc_order);
+    }
+
+    fn make_swap(
+        chain: ParentChainType,
+        created_at: u32,
+        expires_at: Option<u32>,
+    ) -> Swap {
+        Swap::new(
+            SwapId([0u8; 32]),
+            SwapDirection::L2ToL1,
+            chain,
+            SwapTxId::Hash32([0u8; 32]),
+            None,
+            None,
+            bitcoin::Amount::from_sat(1_000_000),
+            Some("tb1qtest".to_string()),
+            Some(bitcoin::Amount::from_sat(500_000)),
+            created_at,
+            expires_at,
+            None,
+        )
+    }
+
+    #[test]
+    fn swap_creation_sets_expiration() {
+        let height = 100;
+        let chain = ParentChainType::Regtest;
+        let expires = Some(height + chain.default_swap_expiration_blocks());
+        let swap = make_swap(chain, height, expires);
+
+        assert_eq!(swap.created_at_height, height);
+        assert_eq!(swap.expires_at_height, Some(height + 50));
+        assert_eq!(swap.state, SwapState::Pending);
+    }
+
+    #[test]
+    fn swap_without_expiration_has_none() {
+        let swap = make_swap(ParentChainType::BTC, 100, None);
+        assert_eq!(swap.expires_at_height, None);
+    }
+
+    #[test]
+    fn default_swap_expiration_blocks_per_chain() {
+        assert_eq!(ParentChainType::BTC.default_swap_expiration_blocks(), 1008);
+        assert_eq!(ParentChainType::BCH.default_swap_expiration_blocks(), 432);
+        assert_eq!(ParentChainType::LTC.default_swap_expiration_blocks(), 432);
+        assert_eq!(
+            ParentChainType::Signet.default_swap_expiration_blocks(),
+            432
+        );
+        assert_eq!(
+            ParentChainType::Regtest.default_swap_expiration_blocks(),
+            50
+        );
+    }
+
+    #[test]
+    fn max_l1_tx_age_blocks_per_chain() {
+        assert_eq!(ParentChainType::BTC.max_l1_tx_age_blocks(), 2016);
+        assert_eq!(ParentChainType::BCH.max_l1_tx_age_blocks(), 2016);
+        assert_eq!(ParentChainType::LTC.max_l1_tx_age_blocks(), 8064);
+        assert_eq!(ParentChainType::Signet.max_l1_tx_age_blocks(), 2016);
+        assert_eq!(ParentChainType::Regtest.max_l1_tx_age_blocks(), 500);
+    }
+
+    #[test]
+    fn swap_expiration_is_relative_to_creation_height() {
+        let chain = ParentChainType::BTC;
+        let created_at = 50_000;
+        let expected_expiry =
+            created_at + chain.default_swap_expiration_blocks();
+        let swap = make_swap(chain, created_at, Some(expected_expiry));
+
+        assert_eq!(swap.expires_at_height, Some(51_008));
+    }
+
+    #[test]
+    fn max_l1_tx_age_exceeds_expiration_for_all_chains() {
+        // max_l1_tx_age should be >= expiration blocks so that a valid swap
+        // can always be filled before expiring
+        for chain in ParentChainType::all() {
+            assert!(
+                chain.max_l1_tx_age_blocks()
+                    >= chain.default_swap_expiration_blocks(),
+                "{:?}: max_l1_tx_age ({}) should be >= expiration_blocks ({})",
+                chain,
+                chain.max_l1_tx_age_blocks(),
+                chain.default_swap_expiration_blocks(),
+            );
+        }
     }
 }
 
