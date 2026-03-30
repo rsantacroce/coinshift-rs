@@ -1,0 +1,1022 @@
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
+
+use bitcoin::Amount;
+use byteorder::{BigEndian, ByteOrder};
+use ed25519_dalek_bip32::{ChildIndex, DerivationPath, ExtendedSigningKey};
+use fallible_iterator::FallibleIterator as _;
+use futures::{Stream, StreamExt};
+use heed::types::{Bytes, SerdeBincode, U8};
+use rustreexo::accumulator::node_hash::BitcoinNodeHash;
+use serde::{Deserialize, Serialize};
+use sneed::{
+    DatabaseUnique, Env, EnvError, RoTxn, RwTxnError, UnitKey,
+    db::error::Error as DbError,
+};
+use tokio_stream::{StreamMap, wrappers::WatchStream};
+
+pub use crate::{
+    authorization::{Authorization, get_address},
+    types::{
+        Address, AuthorizedTransaction, GetValue, InPoint, OutPoint,
+        OutPointKey, Output, OutputContent, ParentChainType, SpentOutput,
+        SwapId, SwapState, SwapTxId, Transaction, TxData,
+    },
+};
+use crate::{
+    types::{
+        Accumulator, AmountOverflowError, AmountUnderflowError, PointedOutput,
+        UtreexoError, VERSION, Version, hash,
+    },
+    util::Watchable,
+};
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, utoipa::ToSchema)]
+pub struct Balance {
+    #[serde(rename = "total_sats", with = "bitcoin::amount::serde::as_sat")]
+    #[schema(value_type = u64)]
+    pub total: Amount,
+    #[serde(
+        rename = "available_sats",
+        with = "bitcoin::amount::serde::as_sat"
+    )]
+    #[schema(value_type = u64)]
+    pub available: Amount,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("address {address} does not exist")]
+    AddressDoesNotExist { address: crate::types::Address },
+    #[error(transparent)]
+    AmountOverflow(#[from] AmountOverflowError),
+    #[error(transparent)]
+    AmountUnderflow(#[from] AmountUnderflowError),
+    #[error("authorization error")]
+    Authorization(#[from] crate::authorization::Error),
+    #[error("bip32 error")]
+    Bip32(#[from] ed25519_dalek_bip32::Error),
+    #[error(transparent)]
+    Db(#[from] DbError),
+    #[error("Database env error")]
+    DbEnv(#[from] EnvError),
+    #[error("Database write error")]
+    DbWrite(#[from] RwTxnError),
+    #[error("io error")]
+    Io(#[from] std::io::Error),
+    #[error(
+        "address {address} not derivable from seed in first {max_index} indices"
+    )]
+    AddressNotRecoverable { address: Address, max_index: u32 },
+    #[error("no index for address {address}")]
+    NoIndex { address: Address },
+    #[error(
+        "wallet does not have a seed (set with RPC `set-seed-from-mnemonic`)"
+    )]
+    NoSeed,
+    #[error("not enough funds")]
+    NotEnoughFunds,
+    #[error("utxo does not exist")]
+    NoUtxo,
+    #[error("failed to parse mnemonic seed phrase")]
+    ParseMnemonic(#[source] bip39::ErrorKind),
+    #[error("seed has already been set")]
+    SeedAlreadyExists,
+    #[error(transparent)]
+    Utreexo(#[from] UtreexoError),
+}
+
+#[derive(Clone)]
+pub struct Wallet {
+    env: sneed::Env,
+    // Seed is always [u8; 64], but due to serde not implementing serialize
+    // for [T; 64], use heed's `Bytes`
+    // TODO: Don't store the seed in plaintext.
+    seed: DatabaseUnique<U8, Bytes>,
+    /// Map each address to it's index
+    address_to_index:
+        DatabaseUnique<SerdeBincode<Address>, SerdeBincode<[u8; 4]>>,
+    /// Map each address index to an address
+    index_to_address:
+        DatabaseUnique<SerdeBincode<[u8; 4]>, SerdeBincode<Address>>,
+    utxos: DatabaseUnique<OutPointKey, SerdeBincode<Output>>,
+    stxos: DatabaseUnique<OutPointKey, SerdeBincode<SpentOutput>>,
+    _version: DatabaseUnique<UnitKey, SerdeBincode<Version>>,
+}
+
+impl Wallet {
+    pub const NUM_DBS: u32 = 6;
+
+    pub fn new(path: &Path) -> Result<Self, Error> {
+        std::fs::create_dir_all(path)?;
+        let env = {
+            use heed::EnvFlags;
+            let mut env_open_options = heed::EnvOpenOptions::new();
+            env_open_options
+                .map_size(10 * 1024 * 1024) // 10MB
+                .max_dbs(Self::NUM_DBS);
+            // Apply LMDB "fast" flags consistent with our benchmark setup:
+            // - WRITE_MAP lets us write directly into the memory map instead of
+            //   copying into LMDB's page buffer, reducing syscall overhead for
+            //   write-heavy workloads.
+            // - MAP_ASYNC hands dirty-page flushing to the kernel so commits do
+            //   not block waiting for msync, keeping latencies tight.
+            // - NO_SYNC and NO_META_SYNC skip fsync calls for data and
+            //   metadata; this trades durability for throughput, which is
+            //   acceptable here because the state can be reconstructed from the
+            //   canonical chain if a crash occurs.
+            // - NO_READ_AHEAD disables kernel readahead that would otherwise
+            //   touch cold pages we immediately overwrite, improving random
+            //   access behaviour on SSDs used in testing.
+            // - NO_TLS stops LMDB from relying on thread-local storage for
+            //   reader slots so transactions can be moved across Tokio tasks.
+            let fast_flags = EnvFlags::WRITE_MAP
+                | EnvFlags::MAP_ASYNC
+                | EnvFlags::NO_SYNC
+                | EnvFlags::NO_META_SYNC
+                | EnvFlags::NO_READ_AHEAD
+                | EnvFlags::NO_TLS;
+            unsafe { env_open_options.flags(fast_flags) };
+            unsafe { Env::open(&env_open_options, path) }
+                .map_err(EnvError::from)?
+        };
+        let mut rwtxn = env.write_txn().map_err(EnvError::from)?;
+        let seed_db = DatabaseUnique::create(&env, &mut rwtxn, "seed")
+            .map_err(EnvError::from)?;
+        let address_to_index =
+            DatabaseUnique::create(&env, &mut rwtxn, "address_to_index")
+                .map_err(EnvError::from)?;
+        let index_to_address =
+            DatabaseUnique::create(&env, &mut rwtxn, "index_to_address")
+                .map_err(EnvError::from)?;
+        let utxos = DatabaseUnique::create(&env, &mut rwtxn, "utxos")
+            .map_err(EnvError::from)?;
+        let stxos = DatabaseUnique::create(&env, &mut rwtxn, "stxos")
+            .map_err(EnvError::from)?;
+        let version = DatabaseUnique::create(&env, &mut rwtxn, "version")
+            .map_err(EnvError::from)?;
+        if version
+            .try_get(&rwtxn, &())
+            .map_err(DbError::from)?
+            .is_none()
+        {
+            version
+                .put(&mut rwtxn, &(), &*VERSION)
+                .map_err(DbError::from)?;
+        }
+        rwtxn.commit().map_err(RwTxnError::from)?;
+        Ok(Self {
+            env,
+            seed: seed_db,
+            address_to_index,
+            index_to_address,
+            utxos,
+            stxos,
+            _version: version,
+        })
+    }
+
+    /// Overwrite the seed, or set it if it does not already exist.
+    pub fn overwrite_seed(&self, seed: &[u8; 64]) -> Result<(), Error> {
+        let mut rwtxn = self.env.write_txn().map_err(EnvError::from)?;
+        self.seed.put(&mut rwtxn, &0, seed).map_err(DbError::from)?;
+        self.address_to_index
+            .clear(&mut rwtxn)
+            .map_err(DbError::from)?;
+        self.index_to_address
+            .clear(&mut rwtxn)
+            .map_err(DbError::from)?;
+        self.utxos.clear(&mut rwtxn).map_err(DbError::from)?;
+        self.stxos.clear(&mut rwtxn).map_err(DbError::from)?;
+        rwtxn.commit().map_err(RwTxnError::from)?;
+        Ok(())
+    }
+
+    pub fn has_seed(&self) -> Result<bool, Error> {
+        let rotxn = self.env.read_txn().map_err(EnvError::from)?;
+        Ok(self
+            .seed
+            .try_get(&rotxn, &0)
+            .map_err(DbError::from)?
+            .is_some())
+    }
+
+    /// Set the seed, if it does not already exist
+    pub fn set_seed(&self, seed: &[u8; 64]) -> Result<(), Error> {
+        let rotxn = self.env.read_txn().map_err(EnvError::from)?;
+        match self.seed.try_get(&rotxn, &0).map_err(DbError::from)? {
+            Some(current_seed) => {
+                if current_seed == seed {
+                    Ok(())
+                } else {
+                    Err(Error::SeedAlreadyExists)
+                }
+            }
+            None => {
+                drop(rotxn);
+                self.overwrite_seed(seed)
+            }
+        }
+    }
+
+    /// Set the seed from a mnemonic seed phrase,
+    /// if the seed does not already exist
+    pub fn set_seed_from_mnemonic(&self, mnemonic: &str) -> Result<(), Error> {
+        let mnemonic =
+            bip39::Mnemonic::from_phrase(mnemonic, bip39::Language::English)
+                .map_err(Error::ParseMnemonic)?;
+        let seed = bip39::Seed::new(&mnemonic, "");
+        let seed_bytes: [u8; 64] = seed.as_bytes().try_into().unwrap();
+        self.set_seed(&seed_bytes)
+    }
+
+    pub fn create_withdrawal(
+        &self,
+        accumulator: &Accumulator,
+        main_address: bitcoin::Address<bitcoin::address::NetworkUnchecked>,
+        value: bitcoin::Amount,
+        main_fee: bitcoin::Amount,
+        fee: bitcoin::Amount,
+    ) -> Result<Transaction, Error> {
+        tracing::trace!(
+            accumulator = %accumulator.0,
+            fee = %fee.display_dynamic(),
+            ?main_address,
+            main_fee = %main_fee.display_dynamic(),
+            value = %value.display_dynamic(),
+            "Creating withdrawal"
+        );
+        let (total, coins) = self.select_coins(
+            value
+                .checked_add(fee)
+                .ok_or(AmountOverflowError)?
+                .checked_add(main_fee)
+                .ok_or(AmountOverflowError)?,
+        )?;
+        let change = total - value - fee;
+
+        let inputs: Vec<_> = coins
+            .into_iter()
+            .map(|(outpoint, output)| {
+                let utxo_hash = hash(&PointedOutput { outpoint, output });
+                (outpoint, utxo_hash)
+            })
+            .collect();
+        let input_utxo_hashes: Vec<BitcoinNodeHash> =
+            inputs.iter().map(|(_, hash)| hash.into()).collect();
+        let proof = accumulator.prove(&input_utxo_hashes)?;
+        let outputs = vec![
+            Output {
+                address: self.get_new_address()?,
+                content: OutputContent::Withdrawal {
+                    value,
+                    main_fee,
+                    main_address,
+                },
+            },
+            Output {
+                address: self.get_new_address()?,
+                content: OutputContent::Value(change),
+            },
+        ];
+        Ok(Transaction {
+            inputs,
+            proof,
+            outputs,
+            data: TxData::Regular,
+        })
+    }
+
+    /// Create a SwapCreate transaction for L2 → L1 swaps
+    /// If l2_recipient is None, creates an open swap (anyone can fill it)
+    /// `is_locked` is an optional function that returns true if an outpoint is locked to a swap
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_swap_create_tx<F>(
+        &self,
+        accumulator: &Accumulator,
+        parent_chain: ParentChainType,
+        l1_recipient_address: String,
+        l1_amount: bitcoin::Amount,
+        l2_recipient: Option<Address>, // Optional - None = open swap
+        l2_amount: bitcoin::Amount,
+        required_confirmations: Option<u32>,
+        fee: bitcoin::Amount,
+        is_locked: F,
+    ) -> Result<(Transaction, SwapId), Error>
+    where
+        F: Fn(&OutPoint) -> bool,
+    {
+        tracing::trace!(
+            ?parent_chain,
+            ?l1_recipient_address,
+            l1_amount = %l1_amount.display_dynamic(),
+            ?l2_recipient,
+            l2_amount = %l2_amount.display_dynamic(),
+            fee = %fee.display_dynamic(),
+            "Creating swap create transaction"
+        );
+
+        // 1. Select UTXOs first (we need the sender address from the UTXOs)
+        // IMPORTANT: We must use the address from the first UTXO being spent, not a new address.
+        // The validation logic in lib/state/swap.rs uses the address from the first input's UTXO
+        // to compute the swap ID, so we must match that here.
+        let required_total =
+            l2_amount.checked_add(fee).ok_or(AmountOverflowError)?;
+        let (total, coins) =
+            self.select_coins_with_filter(required_total, is_locked)?;
+        let change = total - l2_amount - fee;
+
+        // Get the sender address from the first UTXO (this is what validation will use)
+        // This should never be None since select_coins would have failed if there were no coins
+        let l2_sender_address = coins
+            .values()
+            .next()
+            .expect("select_coins returned empty HashMap - this should never happen")
+            .address;
+
+        // Compute swap ID using the address from the first UTXO
+        // This must match what validation computes in lib/state/swap.rs
+        let swap_id = SwapId::from_l2_to_l1(
+            &l1_recipient_address,
+            l1_amount,
+            &l2_sender_address,
+            l2_recipient.as_ref(), // Optional
+        );
+
+        tracing::debug!(
+            swap_id = %swap_id,
+            l2_sender_address = %l2_sender_address,
+            "Computed swap ID using sender address from first UTXO"
+        );
+
+        // 3. Create inputs
+        let inputs: Vec<_> = coins
+            .into_iter()
+            .map(|(outpoint, output)| {
+                let utxo_hash = hash(&PointedOutput { outpoint, output });
+                (outpoint, utxo_hash)
+            })
+            .collect();
+        let input_utxo_hashes: Vec<BitcoinNodeHash> =
+            inputs.iter().map(|(_, hash)| hash.into()).collect();
+        let proof = accumulator.prove(&input_utxo_hashes)?;
+
+        // 4. Create outputs with SwapPending content
+        // For pre-specified swaps, the output is owned by the recipient who
+        // will claim it, so they can sign the SwapClaim transaction.
+        // For open swaps (l2_recipient is None), we use the creator's address
+        // since the recipient is unknown at creation time.
+        let swap_output_address = l2_recipient.unwrap_or(l2_sender_address);
+        let outputs = vec![
+            Output {
+                address: swap_output_address,
+                content: OutputContent::SwapPending {
+                    value: l2_amount,
+                    swap_id: swap_id.0,
+                },
+            },
+            Output {
+                address: self.get_new_address()?,
+                content: OutputContent::Value(change),
+            },
+        ];
+
+        // 5. Create transaction with SwapCreate data
+        let required_confirmations = required_confirmations
+            .unwrap_or_else(|| parent_chain.default_confirmations());
+        let tx = Transaction {
+            inputs,
+            proof,
+            outputs,
+            data: TxData::SwapCreate {
+                swap_id: swap_id.0,
+                parent_chain,
+                l1_txid_bytes: vec![0u8; 32], // Placeholder for L2 → L1
+                required_confirmations,
+                l2_recipient, // Optional
+                l2_amount: l2_amount.to_sat(),
+                l1_recipient_address: Some(l1_recipient_address),
+                l1_amount: Some(l1_amount.to_sat()),
+            },
+        };
+
+        Ok((tx, swap_id))
+    }
+
+    /// Create a SwapClaim transaction
+    /// For pre-specified swaps: recipient should be swap.l2_recipient
+    /// For open swaps: recipient should be the claimer's L2 address (l2_claimer_address)
+    pub fn create_swap_claim_tx(
+        &self,
+        accumulator: &Accumulator,
+        swap_id: SwapId,
+        recipient: Address,
+        locked_outputs: Vec<(OutPoint, Output)>,
+        l2_claimer_address: Option<Address>, // Required for open swaps
+    ) -> Result<Transaction, Error> {
+        tracing::trace!(
+            swap_id = %swap_id,
+            ?recipient,
+            num_outputs = locked_outputs.len(),
+            "Creating swap claim transaction"
+        );
+
+        // 1. Create inputs from locked outputs
+        let inputs: Vec<_> = locked_outputs
+            .iter()
+            .map(|(outpoint, output)| {
+                let utxo_hash = hash(&PointedOutput {
+                    outpoint: *outpoint,
+                    output: output.clone(),
+                });
+                (*outpoint, utxo_hash)
+            })
+            .collect();
+
+        let input_utxo_hashes: Vec<BitcoinNodeHash> =
+            inputs.iter().map(|(_, hash)| hash.into()).collect();
+        let proof = accumulator.prove(&input_utxo_hashes)?;
+
+        // 2. Calculate total value from locked outputs
+        use crate::types::GetValue;
+        let mut total_value = bitcoin::Amount::ZERO;
+        for (_, output) in &locked_outputs {
+            total_value = total_value
+                .checked_add(output.get_value())
+                .ok_or(AmountOverflowError)?;
+        }
+
+        // 3. Create output to swap recipient
+        let outputs = vec![Output {
+            address: recipient,
+            content: OutputContent::Value(total_value),
+        }];
+
+        // 4. Create transaction with SwapClaim data
+        let tx = Transaction {
+            inputs,
+            proof,
+            outputs,
+            data: TxData::SwapClaim {
+                swap_id: swap_id.0,
+                l2_claimer_address, // For open swaps
+                proof_data: None,
+            },
+        };
+
+        Ok(tx)
+    }
+
+    pub fn create_transaction(
+        &self,
+        accumulator: &Accumulator,
+        address: Address,
+        value: bitcoin::Amount,
+        fee: bitcoin::Amount,
+    ) -> Result<Transaction, Error> {
+        let (total, coins) = self
+            .select_coins(value.checked_add(fee).ok_or(AmountOverflowError)?)?;
+        let change = total - value - fee;
+        let inputs: Vec<_> = coins
+            .into_iter()
+            .map(|(outpoint, output)| {
+                let utxo_hash = hash(&PointedOutput { outpoint, output });
+                (outpoint, utxo_hash)
+            })
+            .collect();
+        let input_utxo_hashes: Vec<BitcoinNodeHash> =
+            inputs.iter().map(|(_, hash)| hash.into()).collect();
+        let proof = accumulator.prove(&input_utxo_hashes)?;
+        let outputs = vec![
+            Output {
+                address,
+                content: OutputContent::Value(value),
+            },
+            Output {
+                address: self.get_new_address()?,
+                content: OutputContent::Value(change),
+            },
+        ];
+        Ok(Transaction {
+            inputs,
+            proof,
+            outputs,
+            data: TxData::Regular,
+        })
+    }
+
+    pub fn select_coins(
+        &self,
+        value: bitcoin::Amount,
+    ) -> Result<(bitcoin::Amount, HashMap<OutPoint, Output>), Error> {
+        self.select_coins_with_filter(value, |_| false)
+    }
+
+    pub fn select_coins_with_filter<F>(
+        &self,
+        value: bitcoin::Amount,
+        is_locked: F,
+    ) -> Result<(bitcoin::Amount, HashMap<OutPoint, Output>), Error>
+    where
+        F: Fn(&OutPoint) -> bool,
+    {
+        use rayon::prelude::ParallelSliceMut;
+        let rotxn = self.env.read_txn().map_err(EnvError::from)?;
+        let mut utxos: Vec<_> = self
+            .utxos
+            .iter(&rotxn)
+            .map_err(DbError::from)?
+            .collect()
+            .map_err(DbError::from)?;
+        utxos.par_sort_unstable_by_key(|(_, output)| output.get_value());
+
+        tracing::debug!(
+            total_utxos_in_wallet = utxos.len(),
+            required_value = %value,
+            "Starting coin selection"
+        );
+
+        let mut selected = HashMap::new();
+        let mut total = bitcoin::Amount::ZERO;
+        let mut skipped_withdrawal = 0;
+        let mut skipped_swap_pending = 0;
+        let mut skipped_locked = 0;
+
+        for (outpoint_key, output) in &utxos {
+            let outpoint: OutPoint = outpoint_key.into();
+            let content_kind = if output.content.is_swap_pending() {
+                "swap_pending"
+            } else if output.content.is_withdrawal() {
+                "withdrawal"
+            } else {
+                "value"
+            };
+            let is_locked_output = is_locked(&outpoint);
+
+            tracing::info!(
+                outpoint = ?outpoint,
+                value_sats = output.get_value().to_sat(),
+                content = content_kind,
+                is_locked = is_locked_output,
+                "Coin selection: evaluating UTXO"
+            );
+
+            if output.content.is_withdrawal() {
+                skipped_withdrawal += 1;
+                continue;
+            }
+            // Filter out SwapPending outputs - they are locked and should only be spent in SwapClaim transactions
+            if output.content.is_swap_pending() {
+                skipped_swap_pending += 1;
+                tracing::warn!(
+                    outpoint = ?outpoint,
+                    "Skipping SwapPending output in select_coins (should not be in wallet UTXOs)"
+                );
+                continue;
+            }
+            if is_locked_output {
+                skipped_locked += 1;
+                tracing::warn!(
+                    outpoint = ?outpoint,
+                    "Skipping locked output in select_coins (locked in node state but not filtered by content type)"
+                );
+                continue;
+            }
+            if total > value {
+                break;
+            }
+            total = total
+                .checked_add(output.get_value())
+                .ok_or(AmountOverflowError)?;
+            tracing::debug!(
+                outpoint = ?outpoint,
+                value = %output.get_value(),
+                "Selected UTXO for transaction"
+            );
+            selected.insert(outpoint, output.clone());
+        }
+
+        // Emit a short sample of the selected UTXOs to help debug selection issues
+        for (outpoint, output) in selected.iter().take(10) {
+            tracing::info!(
+                outpoint = ?outpoint,
+                value_sats = output.get_value().to_sat(),
+                content_is_swap_pending = output.content.is_swap_pending(),
+                "Coin selection: selected UTXO"
+            );
+        }
+        if selected.len() > 10 {
+            tracing::info!(
+                extra_selected = selected.len() - 10,
+                "Coin selection: more selected UTXOs not shown"
+            );
+        }
+
+        tracing::info!(
+            selected_count = selected.len(),
+            total_selected = %total,
+            skipped_withdrawal = skipped_withdrawal,
+            skipped_swap_pending = skipped_swap_pending,
+            skipped_locked = skipped_locked,
+            "Coin selection completed"
+        );
+        if total < value {
+            return Err(Error::NotEnoughFunds);
+        }
+        Ok((total, selected))
+    }
+
+    pub fn delete_utxos(&self, outpoints: &[OutPoint]) -> Result<(), Error> {
+        let mut txn = self.env.write_txn().map_err(EnvError::from)?;
+        for outpoint in outpoints {
+            let key = OutPointKey::from(outpoint);
+            self.utxos.delete(&mut txn, &key).map_err(DbError::from)?;
+        }
+        txn.commit().map_err(RwTxnError::from)?;
+        Ok(())
+    }
+
+    pub fn spend_utxos(
+        &self,
+        spent: &[(OutPoint, InPoint)],
+    ) -> Result<(), Error> {
+        let mut txn = self.env.write_txn().map_err(EnvError::from)?;
+        for (outpoint, inpoint) in spent {
+            let key = OutPointKey::from(outpoint);
+            let output =
+                self.utxos.try_get(&txn, &key).map_err(DbError::from)?;
+            if let Some(output) = output {
+                self.utxos.delete(&mut txn, &key).map_err(DbError::from)?;
+                let spent_output = SpentOutput {
+                    output,
+                    inpoint: *inpoint,
+                };
+                self.stxos
+                    .put(&mut txn, &key, &spent_output)
+                    .map_err(DbError::from)?;
+            }
+        }
+        txn.commit().map_err(RwTxnError::from)?;
+        Ok(())
+    }
+
+    pub fn put_utxos(
+        &self,
+        utxos: &HashMap<OutPoint, Output>,
+    ) -> Result<(), Error> {
+        let mut txn = self.env.write_txn().map_err(EnvError::from)?;
+        for (outpoint, output) in utxos {
+            let key = OutPointKey::from(outpoint);
+            self.utxos
+                .put(&mut txn, &key, output)
+                .map_err(DbError::from)?;
+        }
+        txn.commit().map_err(RwTxnError::from)?;
+        Ok(())
+    }
+
+    pub fn get_balance(&self) -> Result<Balance, Error> {
+        let mut balance = Balance::default();
+        let txn = self.env.read_txn().map_err(EnvError::from)?;
+        let () = self
+            .utxos
+            .iter(&txn)
+            .map_err(DbError::from)?
+            .map_err(|err| DbError::from(err).into())
+            .for_each(|(_, utxo)| {
+                let value = utxo.get_value();
+                balance.total = balance
+                    .total
+                    .checked_add(value)
+                    .ok_or(AmountOverflowError)?;
+                if !utxo.content.is_withdrawal() {
+                    balance.available = balance
+                        .available
+                        .checked_add(value)
+                        .ok_or(AmountOverflowError)?;
+                }
+                Ok::<_, Error>(())
+            })?;
+        Ok(balance)
+    }
+
+    pub fn get_utxos(&self) -> Result<HashMap<OutPoint, Output>, Error> {
+        let rotxn = self.env.read_txn().map_err(EnvError::from)?;
+        let utxos: HashMap<OutPoint, Output> = self
+            .utxos
+            .iter(&rotxn)
+            .map_err(DbError::from)?
+            .map(|(key, output)| Ok((key.into(), output)))
+            .collect()
+            .map_err(DbError::from)?;
+        Ok(utxos)
+    }
+
+    pub fn get_addresses(&self) -> Result<HashSet<Address>, Error> {
+        let rotxn = self.env.read_txn().map_err(EnvError::from)?;
+        let addresses: HashSet<_> = self
+            .index_to_address
+            .iter(&rotxn)
+            .map_err(DbError::from)?
+            .map(|(_, address)| Ok(address))
+            .collect()
+            .map_err(DbError::from)?;
+        Ok(addresses)
+    }
+
+    /// Check if an address belongs to this wallet
+    pub fn has_address(&self, address: &Address) -> Result<bool, Error> {
+        let rotxn = self.env.read_txn().map_err(EnvError::from)?;
+        let exists = self
+            .address_to_index
+            .try_get(&rotxn, address)
+            .map_err(DbError::from)?
+            .is_some();
+        Ok(exists)
+    }
+
+    pub fn authorize(
+        &self,
+        transaction: Transaction,
+    ) -> Result<AuthorizedTransaction, Error> {
+        let is_swap_claim =
+            matches!(transaction.data, TxData::SwapClaim { .. });
+        let mut authorizations = Vec::with_capacity(transaction.inputs.len());
+        for (outpoint, _) in &transaction.inputs {
+            let key = OutPointKey::from(outpoint);
+            loop {
+                let (spent_utxo, index) = {
+                    let txn = self.env.read_txn().map_err(EnvError::from)?;
+                    let spent_utxo = self
+                        .utxos
+                        .try_get(&txn, &key)
+                        .map_err(DbError::from)?
+                        .ok_or(Error::NoUtxo)?;
+                    let index = self
+                        .address_to_index
+                        .try_get(&txn, &spent_utxo.address)
+                        .map_err(DbError::from)?;
+                    (spent_utxo, index)
+                };
+                let index = match index {
+                    Some(idx) => BigEndian::read_u32(&idx),
+                    None => {
+                        // For SwapClaim transactions, SwapPending inputs are
+                        // owned by the swap creator, not the claimer. Sign
+                        // with the claimer's own key (index 0) instead.
+                        if is_swap_claim && spent_utxo.content.is_swap_pending()
+                        {
+                            let txn =
+                                self.env.read_txn().map_err(EnvError::from)?;
+                            let signing_key = self.get_signing_key(&txn, 0)?;
+                            let signature = crate::authorization::sign(
+                                &signing_key,
+                                &transaction,
+                            )?;
+                            authorizations.push(Authorization {
+                                verifying_key: signing_key.verifying_key(),
+                                signature,
+                            });
+                            break;
+                        }
+                        self.ensure_address_indexed(&spent_utxo.address)?;
+                        continue;
+                    }
+                };
+                let txn = self.env.read_txn().map_err(EnvError::from)?;
+                let signing_key = self.get_signing_key(&txn, index)?;
+                let signature =
+                    crate::authorization::sign(&signing_key, &transaction)?;
+                authorizations.push(Authorization {
+                    verifying_key: signing_key.verifying_key(),
+                    signature,
+                });
+                break;
+            }
+        }
+        Ok(AuthorizedTransaction {
+            authorizations,
+            transaction,
+        })
+    }
+
+    pub fn get_new_address(&self) -> Result<Address, Error> {
+        let mut txn = self.env.write_txn().map_err(EnvError::from)?;
+        let (last_index, _) = self
+            .index_to_address
+            .last(&txn)
+            .map_err(DbError::from)?
+            .unwrap_or(([0; 4], [0; 20].into()));
+        let last_index = BigEndian::read_u32(&last_index);
+        let index = last_index + 1;
+        let signing_key = self.get_signing_key(&txn, index)?;
+        let address = get_address(&signing_key.verifying_key());
+        let index = index.to_be_bytes();
+        self.index_to_address
+            .put(&mut txn, &index, &address)
+            .map_err(DbError::from)?;
+        self.address_to_index
+            .put(&mut txn, &address, &index)
+            .map_err(DbError::from)?;
+        txn.commit().map_err(RwTxnError::from)?;
+        Ok(address)
+    }
+
+    pub fn get_num_addresses(&self) -> Result<u32, Error> {
+        let txn = self.env.read_txn().map_err(EnvError::from)?;
+        let (last_index, _) = self
+            .index_to_address
+            .last(&txn)
+            .map_err(DbError::from)?
+            .unwrap_or(([0; 4], [0; 20].into()));
+        let last_index = BigEndian::read_u32(&last_index);
+        Ok(last_index)
+    }
+
+    /// Maximum address index to scan when recovering an address from seed
+    /// (e.g. after restoring wallet from seed with empty address index).
+    const MAX_RECOVERY_INDEX: u32 = 100_000;
+
+    /// Derive the receive address for a given index from a seed (same path as
+    /// get_signing_key: m/1'/0'/0'/index).
+    fn derive_address_for_index(
+        seed: &[u8],
+        index: u32,
+    ) -> Result<Address, Error> {
+        let xpriv = ExtendedSigningKey::from_seed(seed)?;
+        let derivation_path = DerivationPath::new([
+            ChildIndex::Hardened(1),
+            ChildIndex::Hardened(0),
+            ChildIndex::Hardened(0),
+            ChildIndex::Hardened(index),
+        ]);
+        let xsigning_key = xpriv.derive(&derivation_path)?;
+        Ok(get_address(&xsigning_key.signing_key.verifying_key()))
+    }
+
+    /// If the address is not in the wallet's address index, try to recover it
+    /// by deriving addresses from the seed until we find a match, then add it
+    /// to the index. Used when restoring from seed so that UTXOs belonging to
+    /// previously used addresses can be spent.
+    pub fn ensure_address_indexed(
+        &self,
+        address: &Address,
+    ) -> Result<(), Error> {
+        {
+            let txn = self.env.read_txn().map_err(EnvError::from)?;
+            if self
+                .address_to_index
+                .try_get(&txn, address)
+                .map_err(DbError::from)?
+                .is_some()
+            {
+                return Ok(());
+            }
+        }
+        let seed: Vec<u8> = {
+            let txn = self.env.read_txn().map_err(EnvError::from)?;
+            self.seed
+                .try_get(&txn, &0)
+                .map_err(DbError::from)?
+                .ok_or(Error::NoSeed)?
+                .to_vec()
+        };
+        let index = (0..Self::MAX_RECOVERY_INDEX)
+            .find_map(|i| {
+                (Self::derive_address_for_index(&seed, i).ok()? == *address)
+                    .then_some(i)
+            })
+            .ok_or(Error::AddressNotRecoverable {
+                address: *address,
+                max_index: Self::MAX_RECOVERY_INDEX,
+            })?;
+        let mut txn = self.env.write_txn().map_err(EnvError::from)?;
+        let index_bytes = index.to_be_bytes();
+        self.index_to_address
+            .put(&mut txn, &index_bytes, address)
+            .map_err(DbError::from)?;
+        self.address_to_index
+            .put(&mut txn, address, &index_bytes)
+            .map_err(DbError::from)?;
+        txn.commit().map_err(RwTxnError::from)?;
+        Ok(())
+    }
+
+    /// Scan derived addresses against a set of known UTXO addresses to
+    /// recover the wallet's address index after restoring from seed.
+    /// Uses a gap limit: stops after `gap` consecutive derived addresses
+    /// that are not found in `utxo_addresses`.
+    pub fn recover_addresses_from_utxo_set(
+        &self,
+        utxo_addresses: &HashSet<Address>,
+    ) -> Result<usize, Error> {
+        if utxo_addresses.is_empty() {
+            return Ok(0);
+        }
+        let seed: Vec<u8> = {
+            let txn = self.env.read_txn().map_err(EnvError::from)?;
+            match self.seed.try_get(&txn, &0).map_err(DbError::from)? {
+                Some(s) => s.to_vec(),
+                None => return Ok(0),
+            }
+        };
+        const GAP_LIMIT: u32 = 20;
+        let mut gap = 0u32;
+        let mut recovered = 0usize;
+        let mut index = 0u32;
+        while gap < GAP_LIMIT && index < Self::MAX_RECOVERY_INDEX {
+            let address = Self::derive_address_for_index(&seed, index)?;
+            if utxo_addresses.contains(&address) {
+                // Check if already indexed
+                let already_indexed = {
+                    let txn = self.env.read_txn().map_err(EnvError::from)?;
+                    self.address_to_index
+                        .try_get(&txn, &address)
+                        .map_err(DbError::from)?
+                        .is_some()
+                };
+                if !already_indexed {
+                    let mut txn =
+                        self.env.write_txn().map_err(EnvError::from)?;
+                    let index_bytes = index.to_be_bytes();
+                    self.index_to_address
+                        .put(&mut txn, &index_bytes, &address)
+                        .map_err(DbError::from)?;
+                    self.address_to_index
+                        .put(&mut txn, &address, &index_bytes)
+                        .map_err(DbError::from)?;
+                    txn.commit().map_err(RwTxnError::from)?;
+                    recovered += 1;
+                }
+                gap = 0;
+            } else {
+                gap += 1;
+            }
+            index += 1;
+        }
+        if recovered > 0 {
+            tracing::info!(
+                recovered,
+                last_index = index,
+                "Recovered wallet addresses from UTXO set"
+            );
+        }
+        Ok(recovered)
+    }
+
+    fn get_signing_key(
+        &self,
+        rotxn: &RoTxn,
+        index: u32,
+    ) -> Result<ed25519_dalek::SigningKey, Error> {
+        let seed = self
+            .seed
+            .try_get(rotxn, &0)
+            .map_err(DbError::from)?
+            .ok_or(Error::NoSeed)?;
+        let xpriv = ExtendedSigningKey::from_seed(seed)?;
+        let derivation_path = DerivationPath::new([
+            ChildIndex::Hardened(1),
+            ChildIndex::Hardened(0),
+            ChildIndex::Hardened(0),
+            ChildIndex::Hardened(index),
+        ]);
+        let xsigning_key = xpriv.derive(&derivation_path)?;
+        Ok(xsigning_key.signing_key)
+    }
+}
+
+impl Watchable<()> for Wallet {
+    type WatchStream = impl Stream<Item = ()>;
+
+    /// Get a signal that notifies whenever the wallet changes
+    fn watch(&self) -> Self::WatchStream {
+        let Self {
+            env: _,
+            seed,
+            address_to_index,
+            index_to_address,
+            utxos,
+            stxos,
+            _version: _,
+        } = self;
+        let watchables = [
+            seed.watch().clone(),
+            address_to_index.watch().clone(),
+            index_to_address.watch().clone(),
+            utxos.watch().clone(),
+            stxos.watch().clone(),
+        ];
+        let streams = StreamMap::from_iter(
+            watchables.into_iter().map(WatchStream::new).enumerate(),
+        );
+        let streams_len = streams.len();
+        streams.ready_chunks(streams_len).map(|signals| {
+            assert_ne!(signals.len(), 0);
+            #[allow(clippy::unused_unit)]
+            ()
+        })
+    }
+}
