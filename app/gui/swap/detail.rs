@@ -9,6 +9,7 @@ use crate::gui::util::{show_l1_amount, show_l2_amount};
 
 use super::list::SwapList;
 
+#[derive(Default)]
 pub struct SwapDetail {
     swap: Option<Swap>,
     l1_txid_input: String,
@@ -17,20 +18,6 @@ pub struct SwapDetail {
     fetching_confirmations: bool,
     success_message: Option<String>,
     claim_error: Option<String>,
-}
-
-impl Default for SwapDetail {
-    fn default() -> Self {
-        Self {
-            swap: None,
-            l1_txid_input: String::new(),
-            l2_recipient_input: String::new(),
-            claimer_address_input: String::new(),
-            fetching_confirmations: false,
-            success_message: None,
-            claim_error: None,
-        }
-    }
 }
 
 impl SwapDetail {
@@ -66,17 +53,12 @@ impl SwapDetail {
         };
 
         // Refresh swap data from state if possible
-        if let Some(app) = app {
-            if swap.created_at_height != 0 {
-                let rotxn = app.node.env().read_txn().ok();
-                if let Some(rotxn) = rotxn {
-                    if let Ok(Some(fresh)) =
-                        app.node.state().get_swap(&rotxn, &swap.id)
-                    {
-                        self.swap = Some(fresh);
-                    }
-                }
-            }
+        if let Some(app) = app
+            && swap.created_at_height != 0
+            && let Some(rotxn) = app.node.env().read_txn().ok()
+            && let Ok(Some(fresh)) = app.node.state().get_swap(&rotxn, &swap.id)
+        {
+            self.swap = Some(fresh);
         }
 
         let swap = self.swap.as_ref().unwrap().clone();
@@ -89,7 +71,6 @@ impl SwapDetail {
                 ui.heading("Swap Detail");
                 if ui.button("<< Back to List").clicked() {
                     self.swap = None;
-                    return;
                 }
             });
 
@@ -251,8 +232,8 @@ impl SwapDetail {
             ui.group(|ui| {
                 ui.heading("Actions");
                 ui.horizontal(|ui| {
-                    if matches!(swap.state, SwapState::Pending) {
-                        if ui
+                    if matches!(swap.state, SwapState::Pending)
+                        && ui
                             .add_enabled(
                                 can_manage,
                                 Button::new(
@@ -261,29 +242,26 @@ impl SwapDetail {
                                 ),
                             )
                             .clicked()
-                            && let Some(app) = app
-                        {
-                            self.cancel_swap(app, &swap, list);
-                        }
+                        && let Some(app) = app
+                    {
+                        self.cancel_swap(app, &swap, list);
                     }
 
                     if matches!(
                         swap.state,
                         SwapState::Pending | SwapState::Cancelled
-                    ) {
-                        if ui
-                            .add_enabled(
-                                can_manage,
-                                Button::new(
-                                    egui::RichText::new("Delete Swap")
-                                        .color(egui::Color32::RED),
-                                ),
-                            )
-                            .clicked()
-                            && let Some(app) = app
-                        {
-                            self.delete_swap(app, &swap, list);
-                        }
+                    ) && ui
+                        .add_enabled(
+                            can_manage,
+                            Button::new(
+                                egui::RichText::new("Delete Swap")
+                                    .color(egui::Color32::RED),
+                            ),
+                        )
+                        .clicked()
+                        && let Some(app) = app
+                    {
+                        self.delete_swap(app, &swap, list);
                     }
 
                     if !can_manage
@@ -601,10 +579,9 @@ impl SwapDetail {
                 swap_id: locked_swap_id,
                 ..
             } = &output.content
+                && *locked_swap_id == swap_id.0
             {
-                if *locked_swap_id == swap_id.0 {
-                    locked_outputs.push((outpoint, output));
-                }
+                locked_outputs.push((outpoint, output));
             }
         }
 

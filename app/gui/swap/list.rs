@@ -33,6 +33,7 @@ enum OwnershipFilter {
 
 // ── SwapList ───────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct SwapList {
     pub(crate) swaps: Option<Vec<Swap>>,
     selected_swap_id: Option<SwapId>,
@@ -46,21 +47,8 @@ pub struct SwapList {
     checking_confirmations: bool,
 }
 
-impl Default for SwapList {
-    fn default() -> Self {
-        Self {
-            swaps: None,
-            selected_swap_id: None,
-            bookmarked: HashSet::new(),
-            status_filter: SwapStatusFilter::default(),
-            ownership_filter: OwnershipFilter::default(),
-            swap_id_search: String::new(),
-            search_error: None,
-            last_confirmation_check: None,
-            checking_confirmations: false,
-        }
-    }
-}
+// Fields all implement Default (Option=None, HashSet=empty, String=empty, bool=false)
+// so we can derive Default instead of implementing it manually.
 
 impl SwapList {
     pub fn new(app: Option<&App>) -> Self {
