@@ -125,6 +125,39 @@ impl ParentChainType {
         }
     }
 
+    /// Get default swap expiration in L2 blocks for this chain.
+    ///
+    /// After this many L2 blocks, an unclaimed swap is automatically cancelled
+    /// and its locked outputs are returned to the creator.
+    pub fn default_swap_expiration_blocks(&self) -> u32 {
+        match self {
+            // ~1 week at 10min L2 blocks
+            Self::BTC => 1008,
+            // ~3 days for faster chains / testnets
+            Self::BCH | Self::LTC | Self::Signet => 432,
+            // Short expiration for testing
+            Self::Regtest => 50,
+        }
+    }
+
+    /// Maximum L1 confirmation age (in L1 blocks) for an L1 transaction
+    /// to be accepted as a swap fill.
+    ///
+    /// Prevents using old, unrelated L1 transactions that happen to match
+    /// the swap's address and amount.
+    pub fn max_l1_tx_age_blocks(&self) -> u32 {
+        match self {
+            // ~2 weeks of Bitcoin blocks
+            Self::BTC => 2016,
+            // ~2 weeks equivalent for other chains
+            Self::BCH => 2016,
+            Self::LTC => 8064,
+            Self::Signet => 2016,
+            // Generous for testing
+            Self::Regtest => 500,
+        }
+    }
+
     /// Get the Bitcoin network enum for this chain type
     pub fn to_bitcoin_network(&self) -> bitcoin::Network {
         match self {

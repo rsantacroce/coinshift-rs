@@ -328,7 +328,7 @@ pub fn connect_prevalidated(
                     l1_recipient_address.clone(),
                     l1_amount.map(bitcoin::Amount::from_sat),
                     current_height,
-                    None, // TODO: Add expiration support
+                    Some(current_height + parent_chain.default_swap_expiration_blocks()),
                     l2_creator_address,
                 );
 
