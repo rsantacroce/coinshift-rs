@@ -13,6 +13,7 @@ mod l1_txid_uniqueness;
 mod l1_verification_rpc_only;
 mod multi_node_verification;
 mod setup;
+mod swap_claim_node_to_node;
 mod swap_creation;
 mod unknown_withdrawal;
 mod util;

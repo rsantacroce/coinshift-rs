@@ -12,6 +12,7 @@ use crate::{
     l1_verification_rpc_only::l1_verification_rpc_only_trial,
     multi_node_verification::multi_node_verification_trial,
     setup::{Init, PostSetup},
+    swap_claim_node_to_node::swap_claim_node_to_node_trial,
     swap_creation::{
         swap_creation_fixed_trial, swap_creation_open_fill_trial,
         swap_creation_open_trial,
@@ -101,6 +102,11 @@ pub fn tests(
             failure_collector.clone(),
         ),
         multi_node_verification_trial(
+            bin_paths.clone(),
+            file_registry.clone(),
+            failure_collector.clone(),
+        ),
+        swap_claim_node_to_node_trial(
             bin_paths.clone(),
             file_registry.clone(),
             failure_collector.clone(),
