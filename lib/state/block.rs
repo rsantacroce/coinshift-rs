@@ -95,6 +95,37 @@ pub fn prevalidate(
             spent_utxos,
             transaction: transaction.clone(),
         };
+        // Run swap-specific validation at block-connection time. The mempool
+        // path (State::validate_transaction) runs these too, but blocks can be
+        // produced/received without ever passing through the mempool, so the
+        // checks MUST be enforced here as well. In particular, SwapClaim
+        // transactions bypass the input-ownership check below (their
+        // SwapPending inputs are owned by the swap creator but spent by the
+        // claimer), so validate_swap_claim is the only thing ensuring such a
+        // claim is legitimate and pays the full locked amount to the recipient.
+        match &transaction.data {
+            TxData::SwapCreate { .. } => {
+                crate::state::swap::validate_swap_create(
+                    state,
+                    rotxn,
+                    transaction,
+                    &filled_tx,
+                )?;
+            }
+            TxData::SwapClaim { .. } => {
+                crate::state::swap::validate_swap_claim(
+                    state,
+                    rotxn,
+                    transaction,
+                    &filled_tx,
+                )?;
+            }
+            TxData::Regular => {
+                crate::state::swap::validate_no_locked_outputs(
+                    state, rotxn, transaction,
+                )?;
+            }
+        }
         total_fees = total_fees
             .checked_add(state.validate_filled_transaction(&filled_tx)?)
             .ok_or(AmountOverflowError)?;
@@ -547,6 +578,35 @@ pub fn validate(
             };
             accumulator_diff.insert((&pointed_output).into());
         }
+        // Swap-specific validation (see the matching block in `prevalidate`).
+        // Without this, SwapClaim transactions — whose SwapPending inputs skip
+        // the authorization/ownership check below — would be entirely
+        // unvalidated at block time, letting anyone drain locked swap funds.
+        match &filled_transaction.transaction.data {
+            TxData::SwapCreate { .. } => {
+                crate::state::swap::validate_swap_create(
+                    state,
+                    rotxn,
+                    &filled_transaction.transaction,
+                    filled_transaction,
+                )?;
+            }
+            TxData::SwapClaim { .. } => {
+                crate::state::swap::validate_swap_claim(
+                    state,
+                    rotxn,
+                    &filled_transaction.transaction,
+                    filled_transaction,
+                )?;
+            }
+            TxData::Regular => {
+                crate::state::swap::validate_no_locked_outputs(
+                    state,
+                    rotxn,
+                    &filled_transaction.transaction,
+                )?;
+            }
+        }
         total_fees = total_fees
             .checked_add(state.validate_filled_transaction(filled_transaction)?)
             .ok_or(AmountOverflowError)?;
@@ -706,6 +766,7 @@ pub fn connect(
     state.utreexo_accumulator.put(rwtxn, &(), &accumulator)?;
     Ok(merkle_root)
 }
+
 
 pub fn disconnect_tip(
     state: &State,
@@ -876,4 +937,251 @@ pub fn disconnect_tip(
         .put(rwtxn, &(), &accumulator)
         .map_err(DbError::from)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod block_swap_claim_tests {
+    //! End-to-end block-level tests for the SwapClaim payout-binding fix.
+    //!
+    //! These build a real block — utreexo accumulator + proof, signed
+    //! authorization, computed merkle root and roots — containing a single
+    //! SwapClaim that spends a locked SwapPending output, and drive it through
+    //! `prevalidate` (the live block-validation entrypoint used by the node).
+    //!
+    //! The exploit being guarded against: a block producer spends the locked
+    //! funds (the SwapPending input's ownership check is skipped for claims),
+    //! pays the swap recipient a token amount, and keeps the rest. Before the
+    //! fix, `prevalidate` never ran `validate_swap_claim`, so such a block was
+    //! accepted.
+
+    use super::*;
+    use crate::authorization::{self, SigningKey};
+    use crate::types::{
+        Accumulator, Address, Output, OutputContent, ParentChainType,
+        SwapDirection, Transaction, Txid, hash,
+    };
+    use bitcoin::hashes::Hash as _;
+
+    const LOCKED: u64 = 1_000_000;
+
+    fn open_env() -> (tempfile::TempDir, sneed::Env) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut opts = heed::EnvOpenOptions::new();
+        opts.map_size(64 * 1024 * 1024).max_dbs(State::NUM_DBS);
+        let env =
+            unsafe { sneed::Env::open(&opts, dir.path()) }.expect("open env");
+        (dir, env)
+    }
+
+    fn recipient_addr() -> Address {
+        Address([0x11; 20])
+    }
+
+    fn attacker_addr() -> Address {
+        Address([0x22; 20])
+    }
+
+    /// Holds everything needed to assemble a claim block against a state that
+    /// already contains one ReadyToClaim swap with a locked SwapPending UTXO.
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        env: sneed::Env,
+        state: State,
+        swap_id: SwapId,
+        key: SigningKey,
+        outpoint: OutPoint,
+        locked_output: Output,
+        utxo_hash: crate::types::Hash,
+        leaf: BitcoinNodeHash,
+        /// Pre-block accumulator (single leaf), used to generate proofs.
+        acc: Accumulator,
+    }
+
+    fn setup() -> Fixture {
+        let (dir, env) = open_env();
+        let state = State::new(&env).expect("state");
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let swap_id = SwapId([0x42; 32]);
+
+        let outpoint = OutPoint::Regular {
+            txid: Txid([0xAB; 32]),
+            vout: 0,
+        };
+        let locked_output = Output {
+            address: attacker_addr(),
+            content: OutputContent::SwapPending {
+                value: bitcoin::Amount::from_sat(LOCKED),
+                swap_id: swap_id.0,
+            },
+        };
+        let pointed = PointedOutput {
+            outpoint,
+            output: locked_output.clone(),
+        };
+        let utxo_hash = hash(&pointed);
+        let leaf: BitcoinNodeHash = (&pointed).into();
+
+        // Build the pre-block accumulator with the single locked leaf.
+        let mut acc = Accumulator::default();
+        let mut add = AccumulatorDiff::default();
+        add.insert(leaf);
+        acc.apply_diff(add).expect("seed accumulator");
+
+        // Persist UTXO, accumulator, swap, and lock.
+        let mut swap = Swap::new(
+            swap_id,
+            SwapDirection::L2ToL1,
+            ParentChainType::Regtest,
+            SwapTxId::Hash32([0u8; 32]),
+            None,
+            Some(recipient_addr()),
+            bitcoin::Amount::from_sat(LOCKED),
+            "tb1qtest".to_string(),
+            bitcoin::Amount::from_sat(500_000),
+            0,
+            None,
+            None,
+        );
+        swap.state = SwapState::ReadyToClaim;
+
+        let mut rwtxn = env.write_txn().expect("write txn");
+        state
+            .utxos
+            .put(&mut rwtxn, &OutPointKey::from(&outpoint), &locked_output)
+            .expect("put utxo");
+        state
+            .utreexo_accumulator
+            .put(&mut rwtxn, &(), &acc)
+            .expect("put accumulator");
+        state.save_swap(&mut rwtxn, &swap).expect("save swap");
+        state
+            .lock_output_to_swap(&mut rwtxn, &outpoint, &swap_id)
+            .expect("lock output");
+        rwtxn.commit().expect("commit");
+
+        Fixture {
+            _dir: dir,
+            env,
+            state,
+            swap_id,
+            key,
+            outpoint,
+            locked_output,
+            utxo_hash,
+            leaf,
+            acc,
+        }
+    }
+
+    impl Fixture {
+        /// Assemble a fully-valid block (proof, signature, merkle root, roots)
+        /// whose single SwapClaim pays the given outputs.
+        fn build_block(&self, outputs: Vec<Output>) -> (Header, Body) {
+            let proof =
+                self.acc.prove(&[self.leaf]).expect("prove locked leaf");
+            let tx = Transaction {
+                inputs: vec![(self.outpoint, self.utxo_hash)],
+                proof,
+                outputs,
+                data: TxData::SwapClaim {
+                    swap_id: self.swap_id.0,
+                    l2_claimer_address: None,
+                    proof_data: None,
+                },
+            };
+
+            // One authorization per input, signed by the attacker key. The
+            // signature is valid ed25519; only the address->utxo match is
+            // skipped for SwapPending inputs.
+            let signature =
+                authorization::sign(&self.key, &tx).expect("sign tx");
+            let authorizations = vec![Authorization {
+                verifying_key: self.key.verifying_key(),
+                signature,
+            }];
+
+            let coinbase: Vec<Output> = Vec::new();
+            let filled = FilledTransaction {
+                spent_utxos: vec![self.locked_output.clone()],
+                transaction: tx.clone(),
+            };
+            let merkle_root =
+                Body::compute_merkle_root(&coinbase, std::slice::from_ref(&filled))
+                    .expect("merkle root");
+
+            // Compute post-block roots: rebuild a single-leaf accumulator and
+            // apply the same diff prevalidate will (remove input, insert
+            // outputs). Coinbase is empty.
+            let mut post = Accumulator::default();
+            let mut seed = AccumulatorDiff::default();
+            seed.insert(self.leaf);
+            post.apply_diff(seed).expect("seed post acc");
+            let mut diff = AccumulatorDiff::default();
+            diff.remove(self.leaf);
+            let txid = tx.txid();
+            for (vout, output) in tx.outputs.iter().enumerate() {
+                let pointed = PointedOutput {
+                    outpoint: OutPoint::Regular {
+                        txid,
+                        vout: vout as u32,
+                    },
+                    output: output.clone(),
+                };
+                diff.insert((&pointed).into());
+            }
+            post.apply_diff(diff).expect("apply block diff");
+            let roots = post.get_roots();
+
+            let header = Header {
+                merkle_root,
+                prev_side_hash: None,
+                prev_main_hash: bitcoin::BlockHash::all_zeros(),
+                roots,
+            };
+            let body = Body {
+                coinbase,
+                transactions: vec![tx],
+                authorizations,
+            };
+            (header, body)
+        }
+
+        fn value_out(addr: Address, sats: u64) -> Output {
+            Output {
+                address: addr,
+                content: OutputContent::Value(bitcoin::Amount::from_sat(sats)),
+            }
+        }
+    }
+
+    /// The exploit at the block level: pay recipient 1 sat, keep the rest.
+    /// `prevalidate` must reject it.
+    #[test]
+    fn prevalidate_rejects_underpaying_claim_block() {
+        let fx = setup();
+        let (header, body) = fx.build_block(vec![
+            Fixture::value_out(recipient_addr(), 1),
+            Fixture::value_out(attacker_addr(), LOCKED - 1),
+        ]);
+        let rotxn = fx.env.read_txn().expect("read txn");
+        let err = prevalidate(&fx.state, &rotxn, &header, &body)
+            .expect_err("underpaying claim block must be rejected");
+        assert!(
+            format!("{err}").contains("must pay the full locked amount"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// An honest claim block paying the full locked amount to the recipient
+    /// must pass full prevalidation (proof, swap rules, merkle root, auth,
+    /// roots).
+    #[test]
+    fn prevalidate_accepts_full_payout_claim_block() {
+        let fx = setup();
+        let (header, body) =
+            fx.build_block(vec![Fixture::value_out(recipient_addr(), LOCKED)]);
+        let rotxn = fx.env.read_txn().expect("read txn");
+        prevalidate(&fx.state, &rotxn, &header, &body)
+            .expect("full-payout claim block must be accepted");
+    }
 }
